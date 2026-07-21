@@ -56,14 +56,12 @@ the biometric unlock; password unlock works on any Mac.
 
 ### Option 1 — download the app (Apple Silicon)
 
-**[⬇ Download Medusa-0.1.0.zip](https://github.com/rohmanhm/medusa/releases/download/v0.1.0/Medusa-0.1.0.zip)**
+**[⬇ Download Medusa-0.1.1.zip](https://github.com/rohmanhm/medusa/releases/download/v0.1.1/Medusa-0.1.1.zip)**
 — or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
 
-1. Unzip and move `Medusa.app` to `/Applications`, then open it.
-2. The release is signed but **not yet notarized**, so the first launch is
-   blocked with a warning. Open **System Settings → Privacy & Security**, scroll
-   down, and click **Open Anyway** — or clear the quarantine flag instead:
-   `xattr -d com.apple.quarantine /Applications/Medusa.app`.
+Unzip and move `Medusa.app` to `/Applications`, then open it. Releases are
+signed with a Developer ID certificate and notarized by Apple, so the app
+opens without any security warning.
 
 The download is built for Apple Silicon. On an Intel Mac, build from source —
 it's one command:

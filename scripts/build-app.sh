@@ -42,10 +42,18 @@ cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/AppIcon/Assets.car" "$APP/Contents/Resources/Assets.car"
 cp "$ROOT/Resources/AppIcon/Medusa.icns" "$APP/Contents/Resources/Medusa.icns"
 
+# Release builds stamp the marketing version; CFBundleVersion must stay
+# monotonic for Sparkle, so it's derived from the commit count.
+if [[ -n "${MEDUSA_VERSION:-}" ]]; then
+	echo "==> stamping version $MEDUSA_VERSION"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MEDUSA_VERSION" "$APP/Contents/Info.plist"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "$ROOT" rev-list --count HEAD)" "$APP/Contents/Info.plist"
+fi
+
 IDENTITY="${MEDUSA_SIGN_IDENTITY:-}"
 if [[ -n "$IDENTITY" ]]; then
 	echo "==> signing with stable identity ($IDENTITY) — TCC grants will persist"
-	codesign --force --options runtime --sign "$IDENTITY" "$APP"
+	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 else
 	echo "==> ad-hoc signing (re-grant permissions after each rebuild; see header to make them persist)"
 	codesign --force --sign - "$APP"
