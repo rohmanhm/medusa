@@ -42,7 +42,7 @@ A published Medusa release whose in-app **Sparkle 2** updater is proven end-to-e
 ## Out of scope
 
 - Tag-triggered CI release pipeline (GitHub Actions, secrets, ASC API key) — charting decision; future effort.
-- DMG migration — zip stays; revisit only if first-install UX becomes a goal.
+- ~~DMG migration~~ — **pulled back into scope and DONE (2026-07-21)** after a real incident: a third-party unzip tool materialized AppleDouble `._*` files into the Sparkle framework root and dropped its symlinks → broken seal → Gatekeeper "could not verify" rejection of a perfectly notarized release. From v0.2.1, release.sh builds a signed/notarized/stapled DMG as the human download (no extraction step = failure mode eliminated); the zip stays as the Sparkle enclosure since Sparkle's own extractor is correct. README warns zip-users to extract with Finder.
 - Homebrew cask (`medusa-app`, `auto_updates true`, `livecheck :sparkle`) — still deferred with v1's distribution tail.
 - Delta updates — the zip is ~2 MB; no benefit.
 - Beta/pre-release update channels.

@@ -60,14 +60,21 @@ the biometric unlock; password unlock works on any Mac.
 
 ### Option 1 — download the app (Apple Silicon)
 
-**[⬇ Download Medusa-0.2.0.zip](https://github.com/rohmanhm/medusa/releases/download/v0.2.0/Medusa-0.2.0.zip)**
+**[⬇ Download Medusa-0.2.1.dmg](https://github.com/rohmanhm/medusa/releases/download/v0.2.1/Medusa-0.2.1.dmg)**
 — or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
 
-Unzip and move `Medusa.app` to `/Applications`, then open it. Releases are
-signed with a Developer ID certificate and notarized by Apple, so the app
-opens without any security warning. From 0.2.0 on, Medusa keeps itself up to
-date — on a 0.1.x build, grab this release manually once and you're on the
-update train.
+Open the DMG and drag **Medusa** into **Applications**, then launch it.
+Releases are signed with a Developer ID certificate and notarized by Apple,
+so the app opens without any security warning. From 0.2.0 on, Medusa keeps
+itself up to date — on a 0.1.x build, grab this release manually once and
+you're on the update train.
+
+> Each release also carries a zip (it feeds the auto-updater). If you install
+> from the zip manually, **unzip by double-clicking it in Finder** — some
+> third-party extractors break the symlinks inside the bundled Sparkle
+> framework, corrupting the code signature, and macOS then refuses the app
+> with a scary "could not verify … free of malware" dialog. The DMG has no
+> extraction step, which is why it's the recommended download.
 
 The download is built for Apple Silicon. On an Intel Mac, build from source —
 it's one command:
@@ -182,8 +189,9 @@ The design decisions and the research behind them live under
 
 ## Distribution
 
-The [releases page](https://github.com/rohmanhm/medusa/releases) ships a zipped
-`Medusa.app`, Developer ID-signed, notarized, and stapled by
+The [releases page](https://github.com/rohmanhm/medusa/releases) ships a
+stapled DMG (the human download) and a zipped `Medusa.app` (the updater
+enclosure), both Developer ID-signed and notarized by
 [`scripts/release.sh`](scripts/release.sh). Installed apps update themselves
 through a [Sparkle 2](https://sparkle-project.org) feed —
 [`appcast.xml`](appcast.xml) in this repo, each release EdDSA-signed by

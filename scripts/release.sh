@@ -72,14 +72,42 @@ echo "==> verifying"
 spctl -a -vv "$APP"
 xcrun stapler validate "$APP"
 
+# DMG for human downloads: no extraction step, so third-party unzip tools
+# can't mangle the Sparkle framework symlinks (which breaks the seal and
+# makes Gatekeeper reject a perfectly notarized app). The zip stays as the
+# Sparkle enclosure — Sparkle extracts with its own correct code.
+DMG="$ROOT/build/Medusa-$VERSION.dmg"
+DMG_STAGE="$ROOT/build/dmg-staging"
+echo "==> building DMG"
+rm -rf "$DMG_STAGE" "$DMG"
+mkdir -p "$DMG_STAGE"
+ditto "$APP" "$DMG_STAGE/Medusa.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+hdiutil create -volname "Medusa" -srcfolder "$DMG_STAGE" -ov -format UDZO -quiet "$DMG"
+rm -rf "$DMG_STAGE"
+codesign --force --sign "$IDENTITY" "$DMG"
+
+echo "==> notarizing DMG (contents are already notarized — usually quick)"
+DMG_OUT="$(xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait --timeout 15m 2>&1 | tee /dev/stderr)"
+DMG_ID="$(awk '/^  id: /{print $2; exit}' <<<"$DMG_OUT")"
+DMG_STATUS="$(awk '/status:/{s=$2} END{print s}' <<<"$DMG_OUT")"
+if [[ "$DMG_STATUS" != "Accepted" ]]; then
+	echo "error: DMG notarization status '$DMG_STATUS' — fetching log:" >&2
+	[[ -n "$DMG_ID" ]] && xcrun notarytool log "$DMG_ID" --keychain-profile "$PROFILE" >&2
+	exit 1
+fi
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+
 BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
 "$ROOT/scripts/update-appcast.sh" "$VERSION" "$BUILD_NUMBER" "$ZIP"
 
 echo ""
-echo "Release artifact: $ZIP"
+echo "Release artifacts: $DMG (humans)"
+echo "                   $ZIP (Sparkle enclosure)"
 echo ""
 echo "Publish — order matters (the appcast must go live only after the asset exists):"
-echo "  1. gh release create v$VERSION \"$ZIP\" --title \"Medusa $VERSION\" --generate-notes"
+echo "  1. gh release create v$VERSION \"$DMG\" \"$ZIP\" --title \"Medusa $VERSION\" --generate-notes"
 echo "  2. git add appcast.xml && git commit -m 'chore: appcast for $VERSION' && git push"
 echo ""
 echo "Installed apps see the update once step 2's push lands on main."
