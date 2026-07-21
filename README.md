@@ -39,6 +39,10 @@ login password.
 - **Stays awake** — an IOKit power assertion keeps the display on and prevents
   idle sleep so your tasks don't pause (toggleable).
 - **Global hotkey** — ⌘⇧L by default, recordable to any chord in Settings.
+- **Auto-updates** — Medusa checks for new releases daily and updates itself
+  in place (Sparkle 2, EdDSA-signed feed); "Check for Updates…" lives in the
+  menu, and the toggle in Settings → General. Updates never interrupt an
+  engaged lock.
 - **Configurable lock screen** — clock, date, unlock hint, or a custom message
   for passers-by, with a live preview in a native Settings window (menu bar →
   **Settings…**, or ⌘,) that also covers launch-at-login, the shortcut, and the
@@ -56,12 +60,14 @@ the biometric unlock; password unlock works on any Mac.
 
 ### Option 1 — download the app (Apple Silicon)
 
-**[⬇ Download Medusa-0.1.1.zip](https://github.com/rohmanhm/medusa/releases/download/v0.1.1/Medusa-0.1.1.zip)**
+**[⬇ Download Medusa-0.2.0.zip](https://github.com/rohmanhm/medusa/releases/download/v0.2.0/Medusa-0.2.0.zip)**
 — or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
 
 Unzip and move `Medusa.app` to `/Applications`, then open it. Releases are
 signed with a Developer ID certificate and notarized by Apple, so the app
-opens without any security warning.
+opens without any security warning. From 0.2.0 on, Medusa keeps itself up to
+date — on a 0.1.x build, grab this release manually once and you're on the
+update train.
 
 The download is built for Apple Silicon. On an Intel Mac, build from source —
 it's one command:
@@ -177,11 +183,13 @@ The design decisions and the research behind them live under
 ## Distribution
 
 The [releases page](https://github.com/rohmanhm/medusa/releases) ships a zipped
-`Medusa.app` signed with the hardened runtime (Apple Development certificate,
-not yet notarized — hence the one-time **Open Anyway** step above). Local
-`build-app.sh` builds are ad-hoc signed. Notarized Developer ID releases (DMG
-via GitHub Actions + `notarytool`) and a Homebrew cask are planned but not
-wired up yet — the full pipeline research is in
+`Medusa.app`, Developer ID-signed, notarized, and stapled by
+[`scripts/release.sh`](scripts/release.sh). Installed apps update themselves
+through a [Sparkle 2](https://sparkle-project.org) feed —
+[`appcast.xml`](appcast.xml) in this repo, each release EdDSA-signed by
+[`scripts/update-appcast.sh`](scripts/update-appcast.sh). Local `build-app.sh`
+builds are ad-hoc signed and never self-update. A Homebrew cask and CI-driven
+releases are planned — the research is in
 [`.scratch/v1-spec/research/04-distribution.md`](.scratch/v1-spec/research/04-distribution.md).
 
 ## License
