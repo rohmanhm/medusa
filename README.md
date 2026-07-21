@@ -1,0 +1,167 @@
+# Medusa 🐍
+
+**Freeze every keyboard and mouse on your Mac with one shortcut. Unlock with Touch ID.**
+
+<p align="center">
+  <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
+</p>
+
+<p align="center">
+  <img src="docs/images/lock-screen.png" alt="Medusa's lock screen: a large clock, the date, a custom message for passers-by, and the unlock hint on a black full-screen shield" width="720">
+</p>
+
+Medusa is an open-source macOS menu-bar utility that blocks all keyboard,
+mouse, and trackpad input while keeping your Mac awake and the screen visible —
+so long-running work (AI coding agents, builds, renders, model training) keeps
+going untouched while you step away. Unlock with Touch ID, Apple Watch, or your
+login password.
+
+> **Medusa is an input shield, not a security boundary.** It stops someone from
+> *fiddling* with your Mac while you're nearby. It does **not** replace locking
+> your screen (`⌃⌘Q`) for real security — see [Escape hatches](#escape-hatches).
+
+## Features
+
+- **System-wide input lock** — keyboard and scroll are swallowed at the
+  event-tap level before any app sees them; mouse clicks land harmlessly on the
+  full-screen shield (never swallowed, so the unlock dialog and every OS escape
+  stay clickable).
+- **Touch ID / Apple Watch / password unlock** — press any key or click, then
+  authenticate.
+- **Can't trap you** — a canceled unlock always lets you try again, a wedged
+  auth dialog fails open, and an absolute backstop releases the lock no matter
+  what. Force-shutdown is never the only way out.
+- **All displays** — every screen is covered, and overlays follow monitor
+  hot-plug and resolution changes.
+- **Stays awake** — an IOKit power assertion keeps the display on and prevents
+  idle sleep so your tasks don't pause (toggleable).
+- **Global hotkey** — ⌘⇧L by default, recordable to any chord in Settings.
+- **Configurable lock screen** — clock, date, unlock hint, or a custom message
+  for passers-by, with a live preview in a native Settings window (menu bar →
+  **Settings…**, or ⌘,) that also covers launch-at-login, the shortcut, and the
+  fail-safe auto-unlock horizon.
+- **Menu-bar only** — no Dock icon, no clutter.
+
+<p align="center">
+  <img src="docs/images/settings-lock-screen.png" alt="Settings → Lock Screen: live preview of the shield, appearance toggles for clock/date/hint, custom message, and keep-awake" width="560">
+</p>
+
+## Getting started
+
+You need macOS 13 or later (developed and tested on macOS 26). Touch ID drives
+the biometric unlock; password unlock works on any Mac.
+
+```bash
+./scripts/build-app.sh          # builds build/Medusa.app (ad-hoc signed)
+open build/Medusa.app
+```
+
+On first launch Medusa opens **Settings → Permissions** and asks for two
+permissions — both are required for an input-blocking app, and macOS makes you
+grant them explicitly:
+
+| Permission | Why Medusa needs it |
+| --- | --- |
+| **Accessibility** | To block (swallow) keyboard and mouse events. |
+| **Input Monitoring** | To observe the input stream it blocks. |
+
+Click **Open Settings…** on each row, toggle **Medusa** on, and the pane
+updates automatically. Then press **⌘⇧L** to lock.
+
+> **Dev note:** ad-hoc-signed builds get a new code signature hash on every
+> rebuild, so macOS may ask you to re-grant the two permissions after
+> `build-app.sh`. To avoid re-granting during development, sign with a stable
+> self-signed identity or a Developer ID (see [Distribution](#distribution)).
+
+## Using it
+
+1. **Lock:** press **⌘⇧L**, or click the menu-bar icon → **Lock Now**. The
+   screen goes black on every display with a clock and an unlock hint (both
+   customizable — add your own "back in 10" message in Settings → Lock Screen).
+2. **Unlock:** press any key or click anywhere → authenticate with Touch ID,
+   Apple Watch, or your password.
+
+## Verifying it works
+
+Four command-line modes let you confirm the lock end-to-end without guessing:
+
+```bash
+# Mechanics check — tap, overlay, keep-awake. Tears down in ~1s, never holds input.
+build/Medusa.app/Contents/MacOS/Medusa --self-test
+
+# Watcher — waits for the permissions and auto-runs the mechanics check the
+# instant you grant them. Handy on first setup: start it, then flip the toggles.
+build/Medusa.app/Contents/MacOS/Medusa --verify
+
+# Real timed lock — genuinely blocks input, then auto-releases after N seconds
+# (default 8) with NO authentication required. The safe way to feel the lock.
+build/Medusa.app/Contents/MacOS/Medusa --lock-test 8
+
+# Real unlock flow — a genuine lock that runs the Touch ID / password dialog so
+# you can exercise CANCEL-then-retry, backed by a hard backstop that
+# force-releases after N seconds (default 25) no matter what. This is the path
+# --lock-test never touches: the auth cancel that used to trap the machine.
+build/Medusa.app/Contents/MacOS/Medusa --auth-test 25
+```
+
+`--self-test` prints a per-piece pass/fail report; it will report the event tap
+as blocked until you grant both permissions, then flip to PASS. `--lock-test` is
+the safe end-to-end proof of the actual input block — it always releases itself,
+so it can't trap the machine. `--auth-test` is the safe way to prove the *unlock*
+path: raise the real dialog, cancel it, confirm it comes back, and trust the
+backstop to release you if anything wedges.
+
+## Escape hatches
+
+Medusa is built so it can never hold your machine hostage. Recovery is layered,
+from "just works" to "last resort":
+
+1. **Try again** — canceling the unlock dialog always re-arms; touch input again
+   and the dialog comes back (Medusa re-activates itself so it reliably
+   re-appears even as a background menu-bar app).
+2. **Fail open on a wedge** — if the system can't present the auth dialog at all
+   (not merely a user cancel), Medusa releases rather than trap you. Repeated
+   system-side auth failures release too.
+3. **Backstop auto-release** — an absolute dead-man's-switch lifts the lock
+   after 30 minutes no matter what (configurable in Settings → General, from
+   15 minutes to never). It rarely fires, because Touch ID lifts the lock in
+   seconds — it's the guarantee that force-shutdown is never required.
+
+Because mouse clicks are **never** swallowed, macOS's own reserved escapes stay
+usable as well:
+
+- **⌘⌥⎋ (Force Quit)** — the Force Quit window stays clickable; force-quit
+  Medusa and input returns instantly.
+- **Power button / Touch ID sensor** — wired to the Secure Enclave, never part
+  of the event stream.
+- **SSH from another machine** — `pkill -f Medusa.app` kills it remotely.
+
+Medusa is honest about being an input shield rather than a lock-screen
+replacement — but unlike a raw event-tap locker, it will not strand you.
+
+## How it works
+
+| Piece | Implementation |
+| --- | --- |
+| Input blocking | Active session-level `CGEventTap` (head-insert) that returns `nil` to swallow keyboard + scroll. Mouse events always pass through — the shield window absorbs the click. |
+| Unlock under lock | Touch ID never touches the event stream; password typing bypasses the tap via macOS Secure Event Input; mouse is always live so the dialog stays clickable. |
+| Lock screen | One borderless `NSWindow` per display at `CGShieldingWindowLevel()`, dropped to the screen-saver level during auth so the system dialog shows on top. |
+| Stay awake | `IOPMAssertionCreateWithName` with `PreventUserIdleDisplaySleep`. |
+| Never trap | The unlock flow classifies every `LAError`: user cancels re-arm (so a bystander can't pop the lock), but a dialog the system can't present fails open. A 30-minute backstop timer force-releases as a last resort. |
+| Reliability | The tap re-enables itself on `tapDisabledByTimeout`/`ByUserInput`, backed by a 1 s watchdog; if the tap can't be created, Medusa **fails open** and never shows a shield that isn't blocking. |
+
+The design decisions and the research behind them live under
+[`.scratch/v1-spec/`](.scratch/v1-spec/).
+
+## Distribution
+
+Local builds are ad-hoc signed. Signed, notarized releases (DMG via GitHub
+Actions + `notarytool`) and a Homebrew cask are planned but not wired up yet —
+the full pipeline research is in
+[`.scratch/v1-spec/research/04-distribution.md`](.scratch/v1-spec/research/04-distribution.md).
+
+## License
+
+[MIT](LICENSE).
