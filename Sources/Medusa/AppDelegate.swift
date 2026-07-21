@@ -5,12 +5,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBar = MenuBarController()
     private let hotKey = HotKey()
     private var settings: SettingsWindowController?
+    private var updater: UpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.registerDefaults()
 
+        let updater = UpdaterController(isLocked: { [weak lock] in lock?.isLocked ?? false })
+        self.updater = updater
+        if UpdaterController.updatesSupported {
+            menuBar.attachUpdater(updater.menuTarget)
+        }
+
         lock.onStateChange = { [weak self] in
-            self?.menuBar.setLocked(self?.lock.isLocked ?? false)
+            guard let self else { return }
+            self.menuBar.setLocked(self.lock.isLocked)
+            if !self.lock.isLocked {
+                self.updater?.lockDidRelease()
+            }
         }
         lock.onLockFailed = { [weak self] in
             self?.showSettings(tab: .permissions)
@@ -48,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showSettings(tab: SettingsWindowController.Tab? = nil) {
         if settings == nil {
-            settings = SettingsWindowController()
+            settings = SettingsWindowController(updater: updater)
         }
         settings?.show(tab: tab)
     }

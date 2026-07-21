@@ -42,6 +42,11 @@ fi
 echo "==> release $VERSION, signing as: $IDENTITY"
 MEDUSA_SIGN_IDENTITY="$IDENTITY" MEDUSA_VERSION="$VERSION" "$ROOT/scripts/build-app.sh" release
 
+# Catch a broken signature seal locally instead of after a 5-minute notary
+# round-trip (Sparkle's nested helpers make the seal easier to get wrong).
+echo "==> verifying signature seal"
+codesign --verify --deep --strict --verbose=2 "$APP"
+
 echo "==> zipping for notarization"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
@@ -67,6 +72,14 @@ echo "==> verifying"
 spctl -a -vv "$APP"
 xcrun stapler validate "$APP"
 
+BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
+"$ROOT/scripts/update-appcast.sh" "$VERSION" "$BUILD_NUMBER" "$ZIP"
+
 echo ""
 echo "Release artifact: $ZIP"
-echo "Publish with:     gh release create v$VERSION \"$ZIP\" --title \"Medusa $VERSION\" --generate-notes"
+echo ""
+echo "Publish — order matters (the appcast must go live only after the asset exists):"
+echo "  1. gh release create v$VERSION \"$ZIP\" --title \"Medusa $VERSION\" --generate-notes"
+echo "  2. git add appcast.xml && git commit -m 'chore: appcast for $VERSION' && git push"
+echo ""
+echo "Installed apps see the update once step 2's push lands on main."

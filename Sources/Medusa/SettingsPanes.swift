@@ -1,8 +1,11 @@
+import Sparkle
 import SwiftUI
 
 // MARK: - General
 
 struct GeneralPane: View {
+    var updater: UpdaterController?
+
     @AppStorage(AppSettings.Keys.lockOnLaunch) private var lockOnLaunch = false
     @AppStorage(AppSettings.Keys.backstopMinutes) private var backstopMinutes = 30
 
@@ -62,9 +65,82 @@ struct GeneralPane: View {
                     + "after this long. Touch ID normally unlocks in seconds — this is "
                     + "the dead-man's switch, not something you should ever notice.")
             }
+
+            Section {
+                if let updater, UpdaterController.updatesSupported {
+                    UpdatesRows(updater: updater)
+                } else {
+                    LabeledContent("Version", value: Self.versionString)
+                    Text("Automatic updates are available in released builds only.")
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Updates")
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 440)
+        .frame(width: 590, height: 560)
+    }
+
+    static var versionString: String {
+        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(short) (\(build))"
+    }
+}
+
+/// The live rows of the Updates section — separate so the KVO-backed model
+/// only exists when the updater actually runs.
+private struct UpdatesRows: View {
+    @StateObject private var model: UpdaterViewModel
+
+    init(updater: UpdaterController) {
+        _model = StateObject(wrappedValue: UpdaterViewModel(updater: updater.updater))
+    }
+
+    var body: some View {
+        Toggle("Check for updates automatically", isOn: $model.autoChecks)
+        LabeledContent("Version", value: GeneralPane.versionString)
+        LabeledContent(model.lastCheckedLabel) {
+            Button("Check Now") { model.checkNow() }
+                .disabled(!model.canCheck)
+        }
+    }
+}
+
+/// Bridges SPUUpdater's KVO properties into SwiftUI.
+private final class UpdaterViewModel: ObservableObject {
+    private let updater: SPUUpdater
+    private var observers: [NSKeyValueObservation] = []
+
+    @Published private(set) var canCheck: Bool
+    @Published var autoChecks: Bool {
+        didSet {
+            if updater.automaticallyChecksForUpdates != autoChecks {
+                updater.automaticallyChecksForUpdates = autoChecks
+            }
+        }
+    }
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        canCheck = updater.canCheckForUpdates
+        autoChecks = updater.automaticallyChecksForUpdates
+        observers.append(updater.observe(\.canCheckForUpdates) { [weak self] updater, _ in
+            DispatchQueue.main.async { self?.canCheck = updater.canCheckForUpdates }
+        })
+        observers.append(updater.observe(\.automaticallyChecksForUpdates) { [weak self] updater, _ in
+            DispatchQueue.main.async { self?.autoChecks = updater.automaticallyChecksForUpdates }
+        })
+    }
+
+    var lastCheckedLabel: String {
+        guard let date = updater.lastUpdateCheckDate else { return "Never checked" }
+        return "Last checked \(date.formatted(.relative(presentation: .named)))"
+    }
+
+    func checkNow() {
+        updater.checkForUpdates()
     }
 }
 

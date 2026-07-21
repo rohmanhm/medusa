@@ -1,10 +1,12 @@
 import AppKit
+import Sparkle
 
 /// The `NSStatusItem` menu — Medusa's only persistent UI surface.
 final class MenuBarController {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let lockItem = NSMenuItem(title: "Lock Now", action: nil, keyEquivalent: "")
+    private let aboutItem = NSMenuItem(title: "About Medusa", action: nil, keyEquivalent: "")
 
     var onLock: (() -> Void)?
     var onSettings: (() -> Void)?
@@ -28,8 +30,8 @@ final class MenuBarController {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        let aboutItem = NSMenuItem(title: "About Medusa", action: #selector(aboutTapped), keyEquivalent: "")
         aboutItem.target = self
+        aboutItem.action = #selector(aboutTapped)
         menu.addItem(aboutItem)
 
         menu.addItem(.separator())
@@ -54,6 +56,19 @@ final class MenuBarController {
     /// Reflects the current lock state in the menu label.
     func setLocked(_ locked: Bool) {
         lockItem.title = locked ? "Unlock" : "Lock Now"
+    }
+
+    /// Adds "Check for Updates…" below About. Targeting the Sparkle controller
+    /// directly gives the item enabled-state validation for free; only called
+    /// in builds where the updater actually runs.
+    func attachUpdater(_ controller: SPUStandardUpdaterController) {
+        let item = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        item.target = controller
+        menu.insertItem(item, at: menu.index(of: aboutItem) + 1)
     }
 
     private func refreshShortcut() {

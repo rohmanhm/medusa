@@ -31,15 +31,15 @@ final class SettingsWindowController: NSWindowController {
         /// these when switching tabs, System Settings-style.
         var size: NSSize {
             switch self {
-            case .general: return NSSize(width: 590, height: 440)
+            case .general: return NSSize(width: 590, height: 560)
             case .lockScreen: return NSSize(width: 590, height: 645)
             case .permissions: return NSSize(width: 590, height: 370)
             }
         }
 
-        @ViewBuilder fileprivate var pane: some View {
+        @ViewBuilder fileprivate func pane(updater: UpdaterController?) -> some View {
             switch self {
-            case .general: GeneralPane()
+            case .general: GeneralPane(updater: updater)
             case .lockScreen: LockScreenPane()
             case .permissions: PermissionsPane()
             }
@@ -48,7 +48,7 @@ final class SettingsWindowController: NSWindowController {
 
     private let tabController = NSTabViewController()
 
-    convenience init() {
+    convenience init(updater: UpdaterController? = nil) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 480),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -61,7 +61,7 @@ final class SettingsWindowController: NSWindowController {
         tabController.tabStyle = .toolbar
         tabController.canPropagateSelectedChildViewControllerTitle = true
         for tab in Tab.allCases {
-            let host = NSHostingController(rootView: AnyView(tab.pane))
+            let host = NSHostingController(rootView: AnyView(tab.pane(updater: updater)))
             host.title = tab.label
             host.preferredContentSize = tab.size
             let item = NSTabViewItem(viewController: host)

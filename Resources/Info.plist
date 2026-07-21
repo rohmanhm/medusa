@@ -28,5 +28,9 @@
 	<string>Open-source input lock for macOS.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/rohmanhm/medusa/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>gfglPa8tNtUQSbtG7V3hAgCRN0Ik3fKWjd+CDdTpgGk=</string>
 </dict>
 </plist>

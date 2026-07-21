@@ -34,8 +34,16 @@ echo "==> assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/Medusa"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+
+# Sparkle: SwiftPM links the framework but never embeds it — copy the one it
+# staged next to the binary (cp -R keeps the Versions/… symlinks, which the
+# code signature requires). The XPC services are sandboxed-app-only; Medusa
+# isn't sandboxed, so strip them BEFORE signing seals the bundle.
+cp -R "$ROOT/.build/$CONFIG/Sparkle.framework" "$APP/Contents/Frameworks/"
+rm -rf "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices"
 
 # App icon: Assets.car carries the light/dark appearances (macOS 26+),
 # Medusa.icns is the classic fallback. Regenerate via scripts/build-icon.sh.
@@ -50,12 +58,23 @@ if [[ -n "${MEDUSA_VERSION:-}" ]]; then
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(git -C "$ROOT" rev-list --count HEAD)" "$APP/Contents/Info.plist"
 fi
 
+# Inside-out signing (never --deep): Sparkle ships ad-hoc-signed, which both
+# notarization and hardened-runtime library validation reject — every build
+# must re-sign its nested helpers, then the framework, then the app, all with
+# the same identity the app uses.
+FW="$APP/Contents/Frameworks/Sparkle.framework"
 IDENTITY="${MEDUSA_SIGN_IDENTITY:-}"
 if [[ -n "$IDENTITY" ]]; then
 	echo "==> signing with stable identity ($IDENTITY) — TCC grants will persist"
+	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW/Versions/B/Autoupdate"
+	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW/Versions/B/Updater.app"
+	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW"
 	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 else
 	echo "==> ad-hoc signing (re-grant permissions after each rebuild; see header to make them persist)"
+	codesign --force --sign - "$FW/Versions/B/Autoupdate"
+	codesign --force --sign - "$FW/Versions/B/Updater.app"
+	codesign --force --sign - "$FW"
 	codesign --force --sign - "$APP"
 fi
 
