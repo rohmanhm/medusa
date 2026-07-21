@@ -21,6 +21,8 @@ enum AppSettings {
         static let showDate = "showDate"
         static let showHint = "showHint"
         static let lockMessage = "lockMessage"
+        static let shieldMotionStyle = "shieldMotionStyle"
+        static let shieldDimMinutes = "shieldDimMinutes"
     }
 
     /// Default shortcut: ⌘⇧L (keyCode 37 == "L" on the ANSI layout).
@@ -41,7 +43,9 @@ enum AppSettings {
             Keys.showClock: true,
             Keys.showDate: true,
             Keys.showHint: true,
-            Keys.lockMessage: ""
+            Keys.lockMessage: "",
+            Keys.shieldMotionStyle: ShieldMotionStyle.drift.rawValue,
+            Keys.shieldDimMinutes: 10
         ])
     }
 
@@ -77,6 +81,27 @@ enum AppSettings {
 
     /// Optional note shown on the lock screen ("Back in 10 — render running").
     static var lockMessage: String { defaults.string(forKey: Keys.lockMessage) ?? "" }
+
+    /// Burn-in protection: how the lock-screen content moves. Defaults to the
+    /// sub-perceptual drift so OLED panels are safe out of the box.
+    static var shieldMotion: ShieldMotionStyle {
+        ShieldMotionStyle(rawValue: defaults.string(forKey: Keys.shieldMotionStyle) ?? "") ?? .drift
+    }
+
+    /// Burn-in protection: dim the lock-screen text after this long. 0 = never.
+    static var shieldDimDuration: TimeInterval {
+        TimeInterval(defaults.integer(forKey: Keys.shieldDimMinutes) * 60)
+    }
+}
+
+/// How the lock-screen content stack moves to spread OLED wear.
+enum ShieldMotionStyle: String {
+    /// AOSP-style zigzag of the center constraints — invisible in practice.
+    case drift
+    /// DeskClock-style relocation to a random point every 15 minutes.
+    case wander
+    /// Static center, today's pre-protection behavior.
+    case off
 }
 
 /// Launch-at-login via `SMAppService`. The service is the source of truth (not

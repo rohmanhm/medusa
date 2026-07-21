@@ -32,7 +32,7 @@ final class SettingsWindowController: NSWindowController {
         var size: NSSize {
             switch self {
             case .general: return NSSize(width: 590, height: 560)
-            case .lockScreen: return NSSize(width: 590, height: 645)
+            case .lockScreen: return NSSize(width: 590, height: 780)
             case .permissions: return NSSize(width: 590, height: 370)
             }
         }

@@ -152,6 +152,23 @@ struct LockScreenPane: View {
     @AppStorage(AppSettings.Keys.showHint) private var showHint = true
     @AppStorage(AppSettings.Keys.lockMessage) private var lockMessage = ""
     @AppStorage(AppSettings.Keys.keepAwake) private var keepAwake = true
+    @AppStorage(AppSettings.Keys.shieldMotionStyle) private var motionStyle = ShieldMotionStyle.drift.rawValue
+    @AppStorage(AppSettings.Keys.shieldDimMinutes) private var dimMinutes = 10
+
+    private static let motionChoices: [(style: ShieldMotionStyle, label: String)] = [
+        (.drift, "Subtle drift"),
+        (.wander, "Wander"),
+        (.off, "Off")
+    ]
+
+    private static let dimChoices: [(minutes: Int, label: String)] = [
+        (2, "2 minutes"),
+        (5, "5 minutes"),
+        (10, "10 minutes"),
+        (15, "15 minutes"),
+        (30, "30 minutes"),
+        (0, "Never")
+    ]
 
     var body: some View {
         Form {
@@ -160,7 +177,9 @@ struct LockScreenPane: View {
                     showClock: showClock,
                     showDate: showDate,
                     showHint: showHint,
-                    message: lockMessage
+                    message: lockMessage,
+                    motion: ShieldMotionStyle(rawValue: motionStyle) ?? .drift,
+                    dimEnabled: dimMinutes > 0
                 )
                 .listRowInsets(EdgeInsets())
             }
@@ -183,6 +202,26 @@ struct LockScreenPane: View {
             }
 
             Section {
+                Picker("Motion", selection: $motionStyle) {
+                    ForEach(Self.motionChoices, id: \.style.rawValue) { choice in
+                        Text(choice.label).tag(choice.style.rawValue)
+                    }
+                }
+                Picker("Dim after", selection: $dimMinutes) {
+                    ForEach(Self.dimChoices, id: \.minutes) { choice in
+                        Text(choice.label).tag(choice.minutes)
+                    }
+                }
+            } header: {
+                Text("Screen Protection")
+            } footer: {
+                Text("Keeps long locks kind to OLED displays. Subtle drift moves the "
+                    + "clock imperceptibly; Wander relocates it every 15 minutes; "
+                    + "dimming halves its brightness once you've stepped away. "
+                    + "Changes apply from the next lock.")
+            }
+
+            Section {
                 Toggle("Keep Mac awake while locked", isOn: $keepAwake)
             } footer: {
                 Text("Holds a power assertion so long builds, renders, and agents keep "
@@ -191,55 +230,148 @@ struct LockScreenPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 645)
+        .frame(width: 590, height: 780)
     }
 }
 
 /// A miniature, live rendition of the shield so toggles can be judged without
 /// actually locking the machine.
+///
+/// The burn-in protection is demoed sped-up: the real drift moves under a
+/// point a minute and dimming waits minutes of idle — invisible in a preview —
+/// so here drift sweeps its wander box in seconds, Wander relocates every few
+/// seconds with the real fade-teleport-fade choreography, and the dim cycle
+/// dims and recovers every few seconds. A caption marks the acceleration.
 private struct LockScreenPreview: View {
     let showClock: Bool
     let showDate: Bool
     let showHint: Bool
     let message: String
+    let motion: ShieldMotionStyle
+    let dimEnabled: Bool
+
+    private var hasContent: Bool { showClock || showDate || showHint || !message.isEmpty }
+    private var demoActive: Bool { hasContent && (motion != .off || dimEnabled) }
 
     var body: some View {
-        TimelineView(.everyMinute) { context in
-            VStack(spacing: 3) {
-                if showClock {
-                    Text(Self.time.string(from: context.date))
-                        .font(.system(size: 36, weight: .thin))
-                        .foregroundStyle(.white.opacity(0.95))
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let demo = Self.demo(
+                at: context.date.timeIntervalSinceReferenceDate,
+                motion: motion,
+                dimEnabled: dimEnabled
+            )
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 3) {
+                    if showClock {
+                        Text(Self.time.string(from: context.date))
+                            .font(.system(size: 36, weight: .thin))
+                            .foregroundStyle(.white.opacity(0.95))
+                    }
+                    if showDate {
+                        Text(Self.date.string(from: context.date))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    if !message.isEmpty {
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.75))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .padding(.top, 8)
+                    }
+                    if showHint {
+                        Text("Press any key or click to unlock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .opacity(demo.hintOpacity)
+                            .animation(.easeInOut(duration: 0.55), value: demo.hintOpacity)
+                            .padding(.top, 8)
+                    }
+                    if !hasContent {
+                        Text("Just black. Very Medusa.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
                 }
-                if showDate {
-                    Text(Self.date.string(from: context.date))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
-                if !message.isEmpty {
-                    Text(message)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .padding(.top, 8)
-                }
-                if showHint {
-                    Text("Press any key or click to unlock")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.6))
-                        .padding(.top, 8)
-                }
-                if !showClock && !showDate && !showHint && message.isEmpty {
-                    Text("Just black. Very Medusa.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.3))
+                .opacity(demo.stackOpacity)
+                .animation(.easeInOut(duration: 0.55), value: demo.stackOpacity)
+                .offset(demo.offset)
+                // Wander teleports while faded out, exactly like the shield;
+                // drift glides between minute steps.
+                .animation(motion == .drift ? .easeInOut(duration: 0.9) : nil, value: demo.offset)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, minHeight: 150)
+
+                if demoActive {
+                    Text("Sped-up demo")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .padding(6)
                 }
             }
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, minHeight: 150)
             .background(.black)
+            .clipped()
         }
+    }
+
+    /// The accelerated demo state for one timeline tick. Pure function of the
+    /// wall clock so it needs no state and every tick is deterministic.
+    private static func demo(at t: TimeInterval, motion: ShieldMotionStyle, dimEnabled: Bool) -> DemoState {
+        var demo = DemoState()
+
+        // Dim cycle: 12 s period — bright for 6 s, dimmed (stack ×0.5, hint
+        // hidden) for 5.5 s, then the fast recovery.
+        if dimEnabled {
+            let phase = t.truncatingRemainder(dividingBy: 12)
+            if phase >= 6 && phase < 11.5 {
+                demo.stackOpacity = 0.5
+                demo.hintOpacity = 0
+            }
+        }
+
+        switch motion {
+        case .drift:
+            // The real zigzag with seconds standing in for minutes: the
+            // 83/521-minute periods become 9/13-second sweeps of a preview-
+            // scaled wander box.
+            demo.offset = CGSize(
+                width: zigzag(t, amplitude: 44, period: 9) - 22,
+                height: zigzag(t, amplitude: 28, period: 13) - 14
+            )
+        case .wander:
+            // Relocate every 4 s: fade out for the last half-second of a slot,
+            // snap to the next slot's position while invisible, fade back in.
+            let slot = Int((t / 4).rounded(.down))
+            let phase = t - Double(slot) * 4
+            if phase >= 3.4 { demo.stackOpacity = 0 }
+            demo.offset = CGSize(
+                width: (pseudoRandom(slot * 2 + 1) * 2 - 1) * 70,
+                height: (pseudoRandom(slot * 2) * 2 - 1) * 26
+            )
+        case .off:
+            break
+        }
+        return demo
+    }
+
+    private struct DemoState: Equatable {
+        var offset: CGSize = .zero
+        var stackOpacity: Double = 1
+        var hintOpacity: Double = 1
+    }
+
+    /// Same triangular wave the shield uses, in preview time.
+    private static func zigzag(_ t: Double, amplitude: Double, period: Double) -> Double {
+        let progress = t.truncatingRemainder(dividingBy: period) / period
+        let ramp = progress <= 0.5 ? progress * 2 : (1 - progress) * 2
+        return amplitude * ramp
+    }
+
+    /// Deterministic hash-noise in 0..<1 so wander positions are stable per slot.
+    private static func pseudoRandom(_ seed: Int) -> Double {
+        let x = sin(Double(seed) * 12.9898) * 43758.5453
+        return x - x.rounded(.down)
     }
 
     private static let time: DateFormatter = {
