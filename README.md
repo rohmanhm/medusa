@@ -3,6 +3,7 @@
 **Freeze every keyboard and mouse on your Mac with one shortcut. Unlock with Touch ID.**
 
 <p align="center">
+  <a href="https://github.com/rohmanhm/medusa/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/rohmanhm/medusa?label=download&color=brightgreen"></a>
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-black">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue">
@@ -53,10 +54,28 @@ login password.
 You need macOS 13 or later (developed and tested on macOS 26). Touch ID drives
 the biometric unlock; password unlock works on any Mac.
 
+### Option 1 — download the app (Apple Silicon)
+
+**[⬇ Download Medusa-0.1.0.zip](https://github.com/rohmanhm/medusa/releases/download/v0.1.0/Medusa-0.1.0.zip)**
+— or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
+
+1. Unzip and move `Medusa.app` to `/Applications`, then open it.
+2. The release is signed but **not yet notarized**, so the first launch is
+   blocked with a warning. Open **System Settings → Privacy & Security**, scroll
+   down, and click **Open Anyway** — or clear the quarantine flag instead:
+   `xattr -d com.apple.quarantine /Applications/Medusa.app`.
+
+The download is built for Apple Silicon. On an Intel Mac, build from source —
+it's one command:
+
+### Option 2 — build from source
+
 ```bash
 ./scripts/build-app.sh          # builds build/Medusa.app (ad-hoc signed)
 open build/Medusa.app
 ```
+
+### First launch
 
 On first launch Medusa opens **Settings → Permissions** and asks for two
 permissions — both are required for an input-blocking app, and macOS makes you
@@ -85,7 +104,9 @@ updates automatically. Then press **⌘⇧L** to lock.
 
 ## Verifying it works
 
-Four command-line modes let you confirm the lock end-to-end without guessing:
+Four command-line modes let you confirm the lock end-to-end without guessing
+(installed the download? use `/Applications/Medusa.app` instead of
+`build/Medusa.app`):
 
 ```bash
 # Mechanics check — tap, overlay, keep-awake. Tears down in ~1s, never holds input.
@@ -157,9 +178,12 @@ The design decisions and the research behind them live under
 
 ## Distribution
 
-Local builds are ad-hoc signed. Signed, notarized releases (DMG via GitHub
-Actions + `notarytool`) and a Homebrew cask are planned but not wired up yet —
-the full pipeline research is in
+The [releases page](https://github.com/rohmanhm/medusa/releases) ships a zipped
+`Medusa.app` signed with the hardened runtime (Apple Development certificate,
+not yet notarized — hence the one-time **Open Anyway** step above). Local
+`build-app.sh` builds are ad-hoc signed. Notarized Developer ID releases (DMG
+via GitHub Actions + `notarytool`) and a Homebrew cask are planned but not
+wired up yet — the full pipeline research is in
 [`.scratch/v1-spec/research/04-distribution.md`](.scratch/v1-spec/research/04-distribution.md).
 
 ## License
