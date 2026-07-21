@@ -64,7 +64,7 @@ the biometric unlock; password unlock works on any Mac.
 
 ### Option 1 — download the app (Apple Silicon)
 
-**[⬇ Download Medusa-0.2.1.dmg](https://github.com/rohmanhm/medusa/releases/download/v0.2.1/Medusa-0.2.1.dmg)**
+**[⬇ Download Medusa-0.2.2.dmg](https://github.com/rohmanhm/medusa/releases/download/v0.2.2/Medusa-0.2.2.dmg)**
 — or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
 
 Open the DMG and drag **Medusa** into **Applications**, then launch it.
