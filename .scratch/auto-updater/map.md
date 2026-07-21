@@ -32,6 +32,7 @@ A published Medusa release whose in-app **Sparkle 2** updater is proven end-to-e
 - [Wire the updater into the app](issues/04-wire-updater.md) — `Updater.swift` gates Sparkle on a runtime Developer ID signature check (dev builds stay silent; `MEDUSA_UPDATER_DEV=1` overrides for testing) and implements all four inert-while-locked layers; menu item + Settings → General Updates section wired; build verified (`--self-test` PASS, strict codesign PASS).
 - [Teach release.sh to publish the appcast](issues/05-release-appcast.md) — new `scripts/update-appcast.sh` (sign_update + hand-appended item, duplicate-version guard, e2e-tested); release.sh verifies the seal pre-notarization and prints the ordered publish checklist (release asset first, appcast push second).
 - [Local end-to-end update proof](issues/07-local-e2e-proof.md) — **the loop is proven on this machine**: old build → scheduled check → download → EdDSA verify → atomic swap → relaunch as the new build, ~5 s, zero clicks; SIGTERM-vs-install-on-quit gotcha documented.
+- [Ship the first self-updating release and prove the loop](issues/06-ship-and-prove.md) — **v0.2.0 shipped** (notarized with Sparkle embedded, appcast live on main, README bootstrapped) and the production loop proven: a DevID-signed older build updated itself from the real appcast + real GitHub asset to notarized 0.2.0. **DESTINATION REACHED** — residual: eyeball the interactive prompt at the first organic update; confirm TCC grants survive the user's own first in-place update.
 
 ## Not yet specified
 
