@@ -86,9 +86,14 @@ it's one command:
 ### Option 2 — build from source
 
 ```bash
-./scripts/build-app.sh          # builds build/Medusa.app (ad-hoc signed)
-open build/Medusa.app
+./scripts/build-app.sh          # builds build/Medusa Local.app (ad-hoc signed)
+open "build/Medusa Local.app"
 ```
+
+Local builds ship as **Medusa Local** (`org.medusa.Medusa.local`) so their
+Accessibility / Input Monitoring grants stay separate from a release install
+in System Settings → Privacy. Release artifacts (via `scripts/release.sh`)
+still ship as plain **Medusa**.
 
 ### First launch
 

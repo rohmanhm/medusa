@@ -40,7 +40,8 @@ if [[ -z "$IDENTITY" ]]; then
 fi
 
 echo "==> release $VERSION, signing as: $IDENTITY"
-MEDUSA_SIGN_IDENTITY="$IDENTITY" MEDUSA_VERSION="$VERSION" "$ROOT/scripts/build-app.sh" release
+MEDUSA_RELEASE=1 MEDUSA_SIGN_IDENTITY="$IDENTITY" MEDUSA_VERSION="$VERSION" \
+	"$ROOT/scripts/build-app.sh" release
 
 # Catch a broken signature seal locally instead of after a 5-minute notary
 # round-trip (Sparkle's nested helpers make the seal easier to get wrong).

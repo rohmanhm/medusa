@@ -2,6 +2,18 @@
 #
 # Builds Medusa and assembles a runnable, ad-hoc-signed .app bundle.
 #
+# Identity: local by default, so day-to-day rebuilds never collide with a
+# release install in System Settings → Privacy (TCC grants are keyed by
+# bundle ID; the display name is what you see in the list).
+#
+#   ./scripts/build-app.sh                 → build/Medusa Local.app
+#                                            org.medusa.Medusa.local
+#   MEDUSA_RELEASE=1 ./scripts/build-app.sh → build/Medusa.app
+#                                            org.medusa.Medusa
+#
+# release.sh always sets MEDUSA_RELEASE=1; you almost never need to set it
+# by hand.
+#
 # Signing: ad-hoc by default (`codesign -s -`) — no prompts, always works, and
 # is enough to run locally and receive the Accessibility / Input Monitoring TCC
 # grants. The only cost is that the ad-hoc hash changes each build, so a rebuild
@@ -18,7 +30,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${1:-release}"
-APP="$ROOT/build/Medusa.app"
+
+# Local builds get a distinct identity so Privacy settings and TCC grants
+# never mix with a production install. Release builds (release.sh) opt out.
+if [[ "${MEDUSA_RELEASE:-}" == "1" ]]; then
+	APP_NAME="Medusa"
+	BUNDLE_ID="org.medusa.Medusa"
+	DISPLAY_NAME="Medusa"
+else
+	APP_NAME="Medusa Local"
+	BUNDLE_ID="org.medusa.Medusa.local"
+	DISPLAY_NAME="Medusa Local"
+fi
+APP="$ROOT/build/${APP_NAME}.app"
 
 echo "==> swift build -c $CONFIG"
 cd "$ROOT"
@@ -37,6 +61,12 @@ mkdir -p "$APP/Contents/Resources"
 mkdir -p "$APP/Contents/Frameworks"
 cp "$BIN" "$APP/Contents/MacOS/Medusa"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+
+# Stamp the local/prod identity over the template plist. CFBundleExecutable
+# stays "Medusa" — it names the binary on disk, not the product people see.
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$APP/Contents/Info.plist"
 
 # Sparkle: SwiftPM links the framework but never embeds it — copy the one it
 # staged next to the binary (cp -R keeps the Versions/… symlinks, which the
@@ -80,4 +110,8 @@ fi
 
 echo ""
 echo "Built: $APP"
+echo "       $DISPLAY_NAME  ($BUNDLE_ID)"
+if [[ "${MEDUSA_RELEASE:-}" != "1" ]]; then
+	echo "       local identity — shows as \"$DISPLAY_NAME\" in Privacy settings"
+fi
 echo "Run:   open \"$APP\"    (or double-click it in Finder)"
