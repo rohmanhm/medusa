@@ -31,6 +31,10 @@ final class LockController {
     private var wedgeCount = 0
     private static let wedgeReleaseThreshold = 2
 
+    /// Keep-awake failure is reported at most once per lock so sleep/wake re-arm
+    /// doesn't spam the same alert every time the display cycles.
+    private var keepAwakeWarned = false
+
     private(set) var isLocked = false
 
     /// Notifies observers (the menu bar) that lock state changed.
@@ -40,8 +44,13 @@ final class LockController {
     /// caller surfaces this (usually a permission gap).
     var onLockFailed: (() -> Void)?
 
+    /// Keep-awake was requested but the kernel refused the power assertion. The
+    /// lock still holds (input is blocked, shield is up) — only the "display
+    /// stays lit" promise is broken. Fired at most once per lock session.
+    var onKeepAwakeFailed: (() -> Void)?
+
     /// - Parameter maxLockDuration: an explicit backstop horizon. The real app
-    ///   omits it (each lock reads the configurable setting, default 30 min);
+    ///   omits it (each lock reads the configurable setting, default 4 hours);
     ///   the `--auth-test` harness passes a few seconds so the lock can never
     ///   trap the tester.
     init(maxLockDuration: TimeInterval? = nil) {
@@ -58,9 +67,9 @@ final class LockController {
             return
         }
 
+        // Arm the shield + tap first so a slow keep-awake alert can never leave
+        // the user staring at a black screen that isn't actually blocking input.
         shield.show()
-        if AppSettings.keepAwake { power.begin() }
-
         tap.onInteraction = { [weak self] in self?.beginAuth() }
         guard tap.start() else {
             // Fail open: never trap the user behind a non-blocking shield.
@@ -71,8 +80,14 @@ final class LockController {
         }
 
         wedgeCount = 0
+        keepAwakeWarned = false
+        if AppSettings.keepAwake {
+            reportKeepAwakeFailureIfNeeded(held: power.begin())
+        }
+
         isLocked = true
         startBackstop()
+        startSessionObservers()
         onStateChange?()
     }
 
@@ -81,6 +96,21 @@ final class LockController {
     func requestUnlock() {
         guard isLocked else { return }
         beginAuth()
+    }
+
+    /// Drop the shield to auth level for a short AppKit interaction (alerts),
+    /// then restore full shielding. Auth-in-progress is left alone.
+    func withShieldLowered(_ work: () -> Void) {
+        guard isLocked else {
+            work()
+            return
+        }
+        let wasAuthenticating = auth.isAuthenticating
+        if !wasAuthenticating { shield.setAuthMode(true) }
+        work()
+        if isLocked, !auth.isAuthenticating {
+            shield.setAuthMode(false)
+        }
     }
 
     private func beginAuth() {
@@ -127,13 +157,73 @@ final class LockController {
 
     private func unlock() {
         stopBackstop()
+        stopSessionObservers()
         tap.stop()
         shield.hide()
         power.end()
         wedgeCount = 0
+        keepAwakeWarned = false
         isLocked = false
         onStateChange?()
     }
+
+    // MARK: - Sleep / wake / session re-arm
+
+    /// Sleep, wake, and fast-user-switch can disable the event tap, drop the
+    /// power assertion, or leave overlays behind the system lock UI. Re-arm so
+    /// a long lock that brushes display sleep doesn't look like "Medusa died
+    /// and macOS took over."
+    private func startSessionObservers() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(sessionDidBecomeActive),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(screensDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+    }
+
+    private func stopSessionObservers() {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    @objc private func systemDidWake() { reaffirmLock() }
+    @objc private func sessionDidBecomeActive() { reaffirmLock() }
+    @objc private func screensDidWake() { reaffirmLock() }
+
+    /// Re-hold the keep-awake assertion, re-enable the tap, and re-front the
+    /// shields. Safe to call spuriously — every step is idempotent while locked.
+    private func reaffirmLock() {
+        guard isLocked else { return }
+        if AppSettings.keepAwake {
+            reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
+        }
+        tap.ensureEnabled()
+        shield.reaffirm()
+    }
+
+    private func reportKeepAwakeFailureIfNeeded(held: Bool) {
+        guard !held, !keepAwakeWarned else { return }
+        keepAwakeWarned = true
+        // Async so the lock path finishes arming before any modal UI runs.
+        DispatchQueue.main.async { [weak self] in
+            self?.onKeepAwakeFailed?()
+        }
+    }
+
+    // MARK: - Backstop
 
     private func startBackstop() {
         stopBackstop()

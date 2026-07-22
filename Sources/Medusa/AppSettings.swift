@@ -38,7 +38,10 @@ enum AppSettings {
             Keys.hotKeyModifiers: defaultHotKeyModifiers,
             Keys.hotKeyKeyChar: defaultHotKeyKeyChar,
             Keys.hotKeyDisplay: defaultHotKeyDisplay,
-            Keys.backstopMinutes: 30,
+            // 4 hours — long enough that overnight renders/agents aren't killed
+            // by the fail-safe, short enough that a wedged unlock still recovers
+            // without a reboot. "Never" remains available for open-ended locks.
+            Keys.backstopMinutes: 240,
             Keys.keepAwake: true,
             Keys.showClock: true,
             Keys.showDate: true,
@@ -97,11 +100,13 @@ enum AppSettings {
 
 /// How the lock-screen content stack moves to spread OLED wear.
 enum ShieldMotionStyle: String {
-    /// AOSP-style incommensurate zigzag of the center constraints, tuned to be
-    /// gently visible — the clock glides slowly around a travel box.
+    /// AOSP-style incommensurate zigzag driven by a display link off the wall
+    /// clock, via a layer transform across the full usable screen — gliding
+    /// the instant the shield appears, at the panel's native refresh rate.
     case drift
     /// DeskClock-style relocation to a random point every couple of minutes,
-    /// with a fade-teleport-fade. The strongest positional spread.
+    /// with a fade-teleport-fade (plus a first relocate ~1.5 s after lock so
+    /// the protection is obvious immediately). The strongest positional spread.
     case wander
     /// Static center, today's pre-protection behavior.
     case off

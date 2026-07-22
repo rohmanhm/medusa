@@ -7,17 +7,17 @@ struct GeneralPane: View {
     var updater: UpdaterController?
 
     @AppStorage(AppSettings.Keys.lockOnLaunch) private var lockOnLaunch = false
-    @AppStorage(AppSettings.Keys.backstopMinutes) private var backstopMinutes = 30
+    @AppStorage(AppSettings.Keys.backstopMinutes) private var backstopMinutes = 240
 
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginItemError: String?
 
     private static let backstopChoices: [(minutes: Int, label: String)] = [
-        (15, "15 minutes"),
-        (30, "30 minutes"),
-        (60, "1 hour"),
-        (120, "2 hours"),
         (240, "4 hours"),
+        (120, "2 hours"),
+        (60, "1 hour"),
+        (30, "30 minutes"),
+        (15, "15 minutes"),
         (0, "Never")
     ]
 
@@ -61,9 +61,10 @@ struct GeneralPane: View {
             } header: {
                 Text("Safety")
             } footer: {
-                Text("However badly an unlock goes, Medusa releases the lock by itself "
-                    + "after this long. Touch ID normally unlocks in seconds — this is "
-                    + "the dead-man's switch, not something you should ever notice.")
+                Text("Dead-man's switch: if unlock ever wedges, Medusa releases itself "
+                    + "after this long so you're never trapped. Defaults to 4 hours so "
+                    + "overnight locks aren't cut short — pick Never for open-ended "
+                    + "sessions. Touch ID still unlocks in seconds under normal use.")
             }
 
             Section {
@@ -217,9 +218,9 @@ struct LockScreenPane: View {
             } footer: {
                 Text("Keeps long locks kind to OLED displays. Wander jumps the clock "
                     + "to a new spot every couple of minutes; Gentle drift glides it "
-                    + "slowly around; dimming fades it once you've stepped away. On "
-                    + "lock, a brief note confirms what's on. Changes apply from the "
-                    + "next lock.")
+                    + "smoothly across the whole screen from the moment you lock; "
+                    + "dimming fades it once you've stepped away. On lock, a brief "
+                    + "note confirms what's on. Changes apply from the next lock.")
             }
 
             Section {

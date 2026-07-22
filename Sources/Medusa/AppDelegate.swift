@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lock.onLockFailed = { [weak self] in
             self?.showSettings(tab: .permissions)
         }
+        lock.onKeepAwakeFailed = { [weak self] in
+            self?.alertKeepAwakeFailed()
+        }
 
         menuBar.onLock = { [weak self] in self?.performLockToggle() }
         menuBar.onSettings = { [weak self] in self?.showSettings() }
@@ -62,5 +65,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings = SettingsWindowController(updater: updater)
         }
         settings?.show(tab: tab)
+    }
+
+    /// Keep-awake was requested but the kernel refused the assertion. The lock
+    /// still holds — only the lit-display promise is broken. Tell the user once
+    /// so a short system display-sleep timer doesn't silently hand the session
+    /// to macOS's own lock screen later.
+    private func alertKeepAwakeFailed() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Couldn't keep the display awake"
+        alert.informativeText =
+            "Medusa is locked and input is blocked, but the system refused the "
+            + "keep-awake assertion. The display may sleep on its normal schedule "
+            + "and macOS may show its own lock screen. Check Energy settings, or "
+            + "turn off “Keep Mac awake while locked” if you don't need a lit display."
+        alert.addButton(withTitle: "OK")
+        // Shield sits at CGShieldingWindowLevel; drop it to the auth level so the
+        // alert is actually visible and clickable, then restore.
+        lock.withShieldLowered {
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 }

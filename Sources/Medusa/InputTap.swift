@@ -96,6 +96,16 @@ final class InputTap {
         hasCuedAuth = false
     }
 
+    /// Re-enable the tap if the OS disabled it (sleep/wake, timeout, TCC
+    /// re-eval). No-op when the tap isn't installed. The 1 s watchdog already
+    /// covers the steady state; this is the explicit path for session re-arm.
+    func ensureEnabled() {
+        guard let tap else { return }
+        if !CGEvent.tapIsEnabled(tap: tap) {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+    }
+
     fileprivate func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:

@@ -12,8 +12,13 @@ final class PowerAssertion {
     private var id: IOPMAssertionID = 0
     private(set) var held = false
 
-    func begin() {
-        guard !held else { return }
+    /// Acquire the keep-awake assertion. Returns `true` when it is held after
+    /// the call (already held counts as success). A `false` return means the
+    /// kernel refused — callers that care about a lit display must surface that
+    /// instead of assuming the screen will stay on.
+    @discardableResult
+    func begin() -> Bool {
+        guard !held else { return true }
         var assertionID: IOPMAssertionID = 0
         let result = IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
@@ -25,6 +30,17 @@ final class PowerAssertion {
             id = assertionID
             held = true
         }
+        return held
+    }
+
+    /// Drop and re-create the assertion. Sleep/wake and session switches can
+    /// leave us thinking we still hold one when the kernel has already cleared
+    /// it — reaffirming is cheaper than debugging a display that quietly went
+    /// dark an hour into a lock.
+    @discardableResult
+    func reaffirm() -> Bool {
+        end()
+        return begin()
     }
 
     func end() {

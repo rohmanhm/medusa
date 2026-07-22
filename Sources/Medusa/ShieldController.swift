@@ -1,4 +1,6 @@
 import AppKit
+import CoreVideo
+import QuartzCore
 
 /// A borderless window that can become key so it absorbs any stray events the
 /// tap lets through (e.g. mouse clicks during authentication).
@@ -74,6 +76,21 @@ final class ShieldController {
         }
     }
 
+    /// Bring the overlays back after sleep/wake or a session switch without
+    /// tearing down content (motion + dim timers keep running). Rebuilds only
+    /// when the display layout actually changed while we were away.
+    func reaffirm() {
+        guard isShown else { return }
+        if NSScreen.screens.map(\.frame) != screenSignature {
+            rebuild()
+            return
+        }
+        for window in windows {
+            window.orderFrontRegardless()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     /// A display change (hot-plug, resolution, arrangement) means we need fresh
     /// overlays. But external displays — TVs especially — fire a *burst* of
     /// these while they renegotiate HDMI/HDR the moment a full-screen window
@@ -132,12 +149,13 @@ final class ShieldController {
 /// - **Wander** (default) — DeskClock-style: every couple of minutes the stack
 ///   fades out, teleports to a random point in the central 60%, and fades back.
 ///   The strongest positional spread, and plainly visible — so you can tell the
-///   protection is live.
-/// - **Drift** — the stack's center constraints follow two triangular waves of
-///   wall-clock minutes with incommensurate periods, so the path never repeats
-///   and re-locks continue it instead of restarting at center. Recomputed every
-///   tick off the fractional wall clock, it *glides* the clock gently around a
-///   travel box — subtle, but perceptible over a minute.
+///   protection is live. The first relocate is animated ~1.5 s after lock so the
+///   protection doesn't sit still until the next wall-clock boundary.
+/// - **Drift** — the stack rides a layer transform along two triangular waves of
+///   wall-clock time with incommensurate periods. A `CVDisplayLink` writes the
+///   phase every display refresh (no Timer jitter, no Auto Layout thrash), so
+///   the clock glides at the panel's native rate the instant the shield appears.
+///   Travel spans the full usable screen (edge-padded so glyphs never clip).
 /// - **Dim** — after the grace period the whole stack drops to half alpha
 ///   (~4× slower OLED wear) and the always-static hint line hides; the first
 ///   touch un-dims in 0.15 s via `setAuthMode`, before the auth dialog lands.
@@ -152,6 +170,21 @@ final class ShieldContentView: NSView {
     private let noticeLabel = ShieldContentView.makeLabel(size: 13, weight: .medium, alpha: 0.45)
     private let stack = NSStackView()
     private var clockTimer: Timer?
+    /// Vsync-aligned driver for continuous drift. A `Timer` tops out around 30 Hz
+    /// with run-loop jitter; the display link fires on every panel refresh so the
+    /// glide is butter-smooth on ProMotion too. Separate from the 1 s clock tick.
+    private var displayLink: CVDisplayLink?
+    /// Only used when `CVDisplayLink` creation fails (rare; headless/CI).
+    private var motionFallbackTimer: Timer?
+    /// Last offset written to the stack layer — also what the motion probe reads.
+    private(set) var stackOffset: CGPoint = .zero
+    /// Cached full-screen travel box so the display-link path never re-measures
+    /// the stack (layout thrash was the jank; measure once after first layout).
+    private var cachedDriftAmplitude: CGSize?
+    private var amplitudeBoundsSize: CGSize = .zero
+    /// Coalesce display-link → main hops so a busy main queue can't pile up
+    /// dozens of stale applyDrift blocks behind one frame.
+    private var driftApplyPending = false
 
     private let motion: ShieldMotionStyle
     private var centerX: NSLayoutConstraint?
@@ -202,6 +235,16 @@ final class ShieldContentView: NSView {
         stack.alignment = .centerX
         stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Layer-backed so continuous drift can ride `transform` at display rate
+        // without thrashing Auto Layout every frame (that was the jank source).
+        stack.wantsLayer = true
+        if let layer = stack.layer {
+            layer.actions = [
+                "position": NSNull(),
+                "bounds": NSNull(),
+                "transform": NSNull()
+            ]
+        }
         addSubview(stack)
         let centerX = stack.centerXAnchor.constraint(equalTo: centerXAnchor)
         let centerY = stack.centerYAnchor.constraint(equalTo: centerYAnchor)
@@ -212,9 +255,23 @@ final class ShieldContentView: NSView {
         let hasContent = !views.isEmpty
         if hasContent {
             switch motion {
-            case .drift: applyDrift(animated: false)
-            case .wander: relocate(animated: false)
-            case .off: break
+            case .drift:
+                // Place at the live wall-clock phase immediately, then the display
+                // link keeps gliding on every refresh from the first frame onward.
+                applyDrift()
+            case .wander:
+                // Seed a non-center resting spot, then animate a real relocate
+                // shortly after lock so "is protection on?" is answered by motion
+                // the user can actually see — not a 0–2 min wait for a minute boundary.
+                relocate(animated: false)
+                if minutesOverride == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, self.motion == .wander else { return }
+                        self.relocate(animated: true)
+                    }
+                }
+            case .off:
+                break
             }
             if dimImmediately {
                 isDimmed = true
@@ -241,11 +298,27 @@ final class ShieldContentView: NSView {
             if minutesOverride == nil { flashProtectionNotice() }
         }
 
-        if AppSettings.showClock || AppSettings.showDate || (hasContent && motion != .off) {
+        if AppSettings.showClock || AppSettings.showDate {
             tick()
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.tick() }
             RunLoop.main.add(timer, forMode: .common)
             clockTimer = timer
+        } else if hasContent && motion == .wander {
+            // Wander still needs the 1 s tick to catch wall-clock minute boundaries
+            // even when the clock/date labels are hidden.
+            tick()
+            let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.tick() }
+            RunLoop.main.add(timer, forMode: .common)
+            clockTimer = timer
+        }
+
+        if hasContent && motion == .drift && minutesOverride == nil {
+            // Continuous glide on the display's refresh clock. A 30 Hz Timer was
+            // still visibly stepped (and janky under run-loop load); the display
+            // link fires once per presented frame — 60 / 120 Hz on ProMotion —
+            // and we write a layer transform with implicit actions disabled.
+            applyDrift()
+            startDisplayLink()
         }
     }
 
@@ -253,7 +326,22 @@ final class ShieldContentView: NSView {
 
     deinit {
         clockTimer?.invalidate()
+        stopDisplayLink()
         dimTimer?.invalidate()
+    }
+
+    override func layout() {
+        super.layout()
+        // Amplitude depends on bounds + stack size. Recompute after layout so
+        // the first real pass (and any later resize) expands to the full
+        // usable area — init-time applyDrift often runs before the stack has
+        // a measured size. Snapshots with a frozen phase also land here.
+        guard motion == .drift else { return }
+        if amplitudeBoundsSize != bounds.size {
+            cachedDriftAmplitude = nil
+            amplitudeBoundsSize = bounds.size
+        }
+        applyDrift()
     }
 
     /// Mirrors `ShieldController.setAuthMode`: an auth attempt is the shield's
@@ -277,57 +365,141 @@ final class ShieldContentView: NSView {
         date.dateFormat = "EEEE, MMMM d"
         dateLabel.stringValue = date.string(from: now)
 
-        // Drift is continuous: glide toward the current wall-clock phase every
-        // tick so the motion is smooth and perceptible, not a once-a-minute hop.
-        if motion == .drift { applyDrift(animated: true) }
-
-        // Wander steps on a whole-minute boundary, every `wanderIntervalMinutes`.
+        // Drift is owned by the display link. Wander still steps on whole
+        // wall-clock minute boundaries so the relocate cadence stays honest.
+        guard motion == .wander else { return }
         let minuteIndex = Int(wallClockMinutes.rounded(.down))
         guard minuteIndex != lastMinuteIndex else { return }
         let isFirstTick = lastMinuteIndex == -1
         lastMinuteIndex = minuteIndex
+        // Skip the first boundary so we don't double-fire with the post-lock
+        // "immediate" relocate scheduled from init.
         guard !isFirstTick else { return }
-        if motion == .wander, minuteIndex.isMultiple(of: Self.wanderIntervalMinutes) {
+        if minuteIndex.isMultiple(of: Self.wanderIntervalMinutes) {
             relocate(animated: true)
         }
     }
 
     // MARK: Drift (incommensurate zigzag)
 
-    /// Incommensurate periods in minutes — the same non-repeating 2-D path as
-    /// AOSP's BurnInHelper, but scaled down from 83/521 min to a few minutes so
-    /// the glide is actually perceptible. 5 and 8 are coprime, so the combined
-    /// path doesn't repeat for ~40 minutes — longer than it stays interesting.
-    private static let driftPeriodX = 5.0
-    private static let driftPeriodY = 8.0
-    /// Full travel per axis, big enough to read as motion over a minute yet
-    /// clamped so small displays never drift more than 10% of their smaller
-    /// dimension. On the faster (X) axis that's ~48 pt of travel a minute.
+    /// Periods in **seconds**. Same triangular-wave path as AOSP's BurnInHelper,
+    /// sped up so motion is obvious, with incommensurate axes so the 2-D path
+    /// doesn't visibly loop for a long time. Scaled with the full-screen travel
+    /// box so peak speed stays ~gentle (a few dozen pt/s on a laptop, not a race).
+    ///
+    /// On a 1728×1080 canvas the usable half-box is roughly ±(864−pad)×±(540−pad);
+    /// full X travel ~1600 pt over half of 90 s ≈ **18 pt/s** peak — visible and
+    /// calm, not a screensaver bounce.
+    private static let driftPeriodX = 90.0
+    private static let driftPeriodY = 143.0
+
+    /// Full travel per axis = twice the max offset from center. Uses the whole
+    /// usable screen: half the view minus half the stack, with a small edge pad
+    /// so glyphs never kiss the bezel. No artificial 10%/120-pt cap. Cached
+    /// after the first successful measure so the display-link path stays cheap.
     private var driftAmplitude: CGSize {
-        let cap = min(bounds.width, bounds.height) * 0.10
-        return CGSize(width: min(120, cap), height: min(80, cap))
+        if let cachedDriftAmplitude, amplitudeBoundsSize == bounds.size {
+            return cachedDriftAmplitude
+        }
+        let fitted = stack.fittingSize
+        let stackSize = stack.bounds.size.width > 1 ? stack.bounds.size : fitted
+        // If we still don't know the stack size, fall back to a generous fraction
+        // of the view — better a slightly-too-large box for one frame than zero
+        // motion while waiting for layout.
+        let w = stackSize.width > 1 ? stackSize.width : min(bounds.width * 0.4, 400)
+        let h = stackSize.height > 1 ? stackSize.height : min(bounds.height * 0.3, 200)
+        let pad: CGFloat = 24
+        let halfW = max(0, (bounds.width - w) / 2 - pad)
+        let halfH = max(0, (bounds.height - h) / 2 - pad)
+        let amplitude = CGSize(width: halfW * 2, height: halfH * 2)
+        if stack.bounds.size.width > 1 || fitted.width > 1 {
+            cachedDriftAmplitude = amplitude
+            amplitudeBoundsSize = bounds.size
+        }
+        return amplitude
     }
 
     /// Triangular wave: sweeps 0 → amplitude → 0 over one period.
-    private static func zigzag(_ minutes: Double, amplitude: CGFloat, period: Double) -> CGFloat {
-        let progress = minutes.truncatingRemainder(dividingBy: period) / period
+    private static func zigzag(_ phase: Double, amplitude: CGFloat, period: Double) -> CGFloat {
+        guard period > 0, amplitude > 0 else { return 0 }
+        let progress = phase.truncatingRemainder(dividingBy: period) / period
         let ramp = progress <= 0.5 ? progress * 2 : (1 - progress) * 2
         return amplitude * CGFloat(ramp)
     }
 
+    /// Wall-clock phase in **seconds** for continuous drift, or the frozen
+    /// snapshot override (stored in minutes — converted here so production and
+    /// snapshot stay independent).
+    private var wallClockSeconds: Double {
+        if let minutesOverride { return minutesOverride * 60 }
+        return Date().timeIntervalSince1970
+    }
+
+    /// Whole minutes of wall clock — used by wander's boundary detector. The
+    /// snapshot override freezes this too so a frozen-phase shot is stable.
     private var wallClockMinutes: Double {
         minutesOverride ?? Date().timeIntervalSince1970 / 60
     }
 
-    private func applyDrift(animated: Bool) {
+    /// Write the current wall-clock phase as a layer transform. Called once per
+    /// display refresh; constraints stay pinned at center so Auto Layout never
+    /// re-solves mid-glide (that thrash was the jank).
+    private func applyDrift() {
         let amplitude = driftAmplitude
-        let minutes = wallClockMinutes
+        let phase = wallClockSeconds
         // Centered on screen center: offsets span ±amplitude/2.
         let offset = CGPoint(
-            x: Self.zigzag(minutes, amplitude: amplitude.width, period: Self.driftPeriodX) - amplitude.width / 2,
-            y: Self.zigzag(minutes, amplitude: amplitude.height, period: Self.driftPeriodY) - amplitude.height / 2
+            x: Self.zigzag(phase, amplitude: amplitude.width, period: Self.driftPeriodX) - amplitude.width / 2,
+            y: Self.zigzag(phase, amplitude: amplitude.height, period: Self.driftPeriodY) - amplitude.height / 2
         )
-        setStackOffset(offset, animated: animated)
+        setStackOffset(offset, animated: false)
+    }
+
+    // MARK: Display-link driver
+
+    private func startDisplayLink() {
+        stopDisplayLink()
+        var link: CVDisplayLink?
+        // Main display drives the cadence for every shield — ProMotion-aware,
+        // and we avoid juggling one link per screen. Secondary panels still
+        // get smooth-enough updates from the main's refresh.
+        guard CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &link) == kCVReturnSuccess,
+              let link
+        else {
+            // Fallback: 60 Hz Timer if the link can't be created (rare).
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+                self?.applyDrift()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            motionFallbackTimer = timer
+            return
+        }
+        let callback: CVDisplayLinkOutputCallback = { _, _, _, _, _, userInfo in
+            guard let userInfo else { return kCVReturnSuccess }
+            let view = Unmanaged<ShieldContentView>.fromOpaque(userInfo).takeUnretainedValue()
+            // Callbacks arrive off the main thread; layer mutations must not.
+            // Coalesce: if a previous hop is still queued, skip — wall-clock
+            // phase on the next apply is always current, so drops are free.
+            if view.driftApplyPending { return kCVReturnSuccess }
+            view.driftApplyPending = true
+            DispatchQueue.main.async {
+                view.driftApplyPending = false
+                view.applyDrift()
+            }
+            return kCVReturnSuccess
+        }
+        CVDisplayLinkSetOutputCallback(link, callback, Unmanaged.passUnretained(self).toOpaque())
+        CVDisplayLinkStart(link)
+        displayLink = link
+    }
+
+    private func stopDisplayLink() {
+        if let displayLink {
+            CVDisplayLinkStop(displayLink)
+            self.displayLink = nil
+        }
+        motionFallbackTimer?.invalidate()
+        motionFallbackTimer = nil
     }
 
     // MARK: Wander (DeskClock relocation)
@@ -368,20 +540,34 @@ final class ShieldContentView: NSView {
     }
 
     private func setStackOffset(_ offset: CGPoint, animated: Bool) {
-        let apply = { [self] in
-            centerX?.constant = offset.x
-            centerY?.constant = offset.y
+        stackOffset = offset
+        // Continuous drift uses the layer transform so we never re-solve Auto
+        // Layout at display rate. Wander still teleports via the same path
+        // (instant) — its fade is alpha-only and doesn't need a layout hop.
+        // Constraints stay at center; transform is the sole position channel.
+        centerX?.constant = 0
+        centerY?.constant = 0
+        let applyTransform = { [self] in
+            // CALayer geometry is y-up; AppKit view coordinates are y-up too for
+            // affine translation in the layer's superlayer space when the view
+            // is layer-backed without a flipped geometry — translating by
+            // (offset.x, offset.y) matches the old constraint constants.
+            stack.layer?.transform = CATransform3DMakeTranslation(offset.x, offset.y, 0)
         }
         guard animated else {
-            apply()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            applyTransform()
+            CATransaction.commit()
             return
         }
+        // Animated path kept for API symmetry; wander doesn't use it for
+        // position (fade-teleport-fade sets offset with animated: false).
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 1.0
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
-            apply()
-            layoutSubtreeIfNeeded()
+            applyTransform()
         }
     }
 

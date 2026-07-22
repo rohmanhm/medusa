@@ -17,6 +17,12 @@ if let index = CommandLine.arguments.firstIndex(of: "--snapshot-settings"),
 } else if let index = CommandLine.arguments.firstIndex(of: "--snapshot-lockpane"),
           CommandLine.arguments.indices.contains(index + 1) {
     delegate = SnapshotRunner(subject: .lockPane, outputDir: CommandLine.arguments[index + 1])
+} else if let index = CommandLine.arguments.firstIndex(of: "--motion-probe") {
+    let next = CommandLine.arguments.index(after: index)
+    let seconds = (next < CommandLine.arguments.endIndex
+        ? TimeInterval(CommandLine.arguments[next])
+        : nil) ?? 8
+    delegate = SnapshotRunner(subject: .motionProbe(seconds: seconds))
 } else if let mode = SelfTestMode.from(CommandLine.arguments) {
     delegate = SelfTestRunner(mode: mode)
 } else {
