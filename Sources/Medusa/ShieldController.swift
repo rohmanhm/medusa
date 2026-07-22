@@ -21,6 +21,13 @@ final class ShieldController {
     private var windows: [ShieldWindow] = []
     private(set) var isShown = false
 
+    /// The display layout the current overlays were built for. `screensChanged`
+    /// compares against this so a notification that doesn't actually change the
+    /// arrangement (macOS fires spurious ones) is ignored instead of tearing
+    /// every overlay down and restarting its motion.
+    private var screenSignature: [NSRect] = []
+    private var rebuildDebounce: Timer?
+
     private var lockedLevel: NSWindow.Level {
         NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
     }
@@ -46,8 +53,11 @@ final class ShieldController {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        rebuildDebounce?.invalidate()
+        rebuildDebounce = nil
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
+        screenSignature = []
         isShown = false
     }
 
@@ -64,15 +74,32 @@ final class ShieldController {
         }
     }
 
+    /// A display change (hot-plug, resolution, arrangement) means we need fresh
+    /// overlays. But external displays — TVs especially — fire a *burst* of
+    /// these while they renegotiate HDMI/HDR the moment a full-screen window
+    /// appears over them, and some fire with no real change at all. Ignore the
+    /// no-ops (by signature) and coalesce the rest (by debounce) so we rebuild
+    /// once, after the layout settles — never mid-storm, which is what left one
+    /// display's overlay half-built while the other kept animating.
     @objc private func screensChanged() {
-        if isShown { rebuild() }
+        guard isShown else { return }
+        guard NSScreen.screens.map(\.frame) != screenSignature else { return }
+        rebuildDebounce?.invalidate()
+        let timer = Timer(timeInterval: 0.35, repeats: false) { [weak self] _ in
+            self?.rebuildDebounce = nil
+            self?.rebuild()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        rebuildDebounce = timer
     }
 
     private func rebuild() {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
 
-        for screen in NSScreen.screens {
+        let screens = NSScreen.screens
+        screenSignature = screens.map(\.frame)
+        for screen in screens {
             let window = ShieldWindow(
                 contentRect: screen.frame,
                 styleMask: .borderless,
@@ -101,26 +128,32 @@ final class ShieldController {
 /// individually toggleable in Settings; the view reads the preferences once at
 /// creation (a shield is rebuilt for every lock, so changes apply next lock).
 ///
-/// Burn-in protection (the OLED-safe-lock-display research, both default-on):
+/// Burn-in protection (the OLED-safe-lock-display research, default-on):
+/// - **Wander** (default) — DeskClock-style: every couple of minutes the stack
+///   fades out, teleports to a random point in the central 60%, and fades back.
+///   The strongest positional spread, and plainly visible — so you can tell the
+///   protection is live.
 /// - **Drift** — the stack's center constraints follow two triangular waves of
-///   wall-clock minutes with AOSP's incommensurate 83/521-minute periods, so
-///   the path never repeats and re-locks continue the pattern instead of
-///   restarting at center. Steps land on minute boundaries, under a point each
-///   — invisible, but hours of lock spread every glyph over a 32×48 pt band.
-/// - **Wander** (opt-in) — DeskClock-style: every 15 minutes the stack fades
-///   out, teleports to a random point in the central 60%, and fades back.
+///   wall-clock minutes with incommensurate periods, so the path never repeats
+///   and re-locks continue it instead of restarting at center. Recomputed every
+///   tick off the fractional wall clock, it *glides* the clock gently around a
+///   travel box — subtle, but perceptible over a minute.
 /// - **Dim** — after the grace period the whole stack drops to half alpha
 ///   (~4× slower OLED wear) and the always-static hint line hides; the first
 ///   touch un-dims in 0.15 s via `setAuthMode`, before the auth dialog lands.
+/// - **Protection notice** — on lock, a one-line summary of what's active fades
+///   in near the bottom for a few seconds, then fades away: instant confirmation
+///   the protection is on without leaving a static element burning in.
 final class ShieldContentView: NSView {
     private let clockLabel = ShieldContentView.makeLabel(size: 84, weight: .thin, alpha: 0.95)
     private let dateLabel = ShieldContentView.makeLabel(size: 17, weight: .regular, alpha: 0.5)
     private let messageLabel = ShieldContentView.makeLabel(size: 16, weight: .regular, alpha: 0.75)
     private let hintLabel = ShieldContentView.makeLabel(size: 15, weight: .medium, alpha: 0.6)
+    private let noticeLabel = ShieldContentView.makeLabel(size: 13, weight: .medium, alpha: 0.45)
     private let stack = NSStackView()
     private var clockTimer: Timer?
 
-    private let motion = AppSettings.shieldMotion
+    private let motion: ShieldMotionStyle
     private var centerX: NSLayoutConstraint?
     private var centerY: NSLayoutConstraint?
     private var lastMinuteIndex = -1
@@ -130,11 +163,18 @@ final class ShieldContentView: NSView {
     private var isDimmed = false
 
     /// Test seams for the snapshot runner: freeze the drift phase at a known
-    /// wall-clock minute, or start in the dimmed state. Production passes nothing.
+    /// wall-clock minute, start in the dimmed state, or force a motion style
+    /// regardless of the saved setting. Production passes nothing.
     private let minutesOverride: Double?
 
-    init(frame frameRect: NSRect, referenceMinutes: Double? = nil, dimImmediately: Bool = false) {
+    init(
+        frame frameRect: NSRect,
+        referenceMinutes: Double? = nil,
+        dimImmediately: Bool = false,
+        motionOverride: ShieldMotionStyle? = nil
+    ) {
         self.minutesOverride = referenceMinutes
+        self.motion = motionOverride ?? AppSettings.shieldMotion
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
@@ -185,6 +225,22 @@ final class ShieldContentView: NSView {
             }
         }
 
+        // Bottom-pinned, independent of the stack so its fade never reflows the
+        // clock. Flashed only in the live app (a frozen-phase snapshot would
+        // catch it mid-fade); pinned to the view, not the stack, so it doesn't
+        // ride the motion. Skipped on an empty shield — nothing static to guard.
+        if hasContent, let summary = Self.protectionSummary(motion: motion, dimDuration: dimDuration) {
+            noticeLabel.stringValue = summary
+            noticeLabel.alphaValue = 0
+            noticeLabel.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(noticeLabel)
+            NSLayoutConstraint.activate([
+                noticeLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+                noticeLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -32)
+            ])
+            if minutesOverride == nil { flashProtectionNotice() }
+        }
+
         if AppSettings.showClock || AppSettings.showDate || (hasContent && motion != .off) {
             tick()
             let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.tick() }
@@ -221,32 +277,35 @@ final class ShieldContentView: NSView {
         date.dateFormat = "EEEE, MMMM d"
         dateLabel.stringValue = date.string(from: now)
 
+        // Drift is continuous: glide toward the current wall-clock phase every
+        // tick so the motion is smooth and perceptible, not a once-a-minute hop.
+        if motion == .drift { applyDrift(animated: true) }
+
+        // Wander steps on a whole-minute boundary, every `wanderIntervalMinutes`.
         let minuteIndex = Int(wallClockMinutes.rounded(.down))
         guard minuteIndex != lastMinuteIndex else { return }
         let isFirstTick = lastMinuteIndex == -1
         lastMinuteIndex = minuteIndex
         guard !isFirstTick else { return }
-        switch motion {
-        case .drift:
-            applyDrift(animated: true)
-        case .wander:
-            if minuteIndex.isMultiple(of: 15) { relocate(animated: true) }
-        case .off:
-            break
+        if motion == .wander, minuteIndex.isMultiple(of: Self.wanderIntervalMinutes) {
+            relocate(animated: true)
         }
     }
 
-    // MARK: Drift (AOSP zigzag)
+    // MARK: Drift (incommensurate zigzag)
 
-    /// Incommensurate periods in minutes, straight from AOSP's BurnInHelper —
-    /// their ratio is irrational enough that the 2-D path never visibly repeats.
-    private static let driftPeriodX = 83.0
-    private static let driftPeriodY = 521.0
-    /// Full travel per axis, clamped so tiny displays never drift the stack
-    /// more than 5% of their smaller dimension.
+    /// Incommensurate periods in minutes — the same non-repeating 2-D path as
+    /// AOSP's BurnInHelper, but scaled down from 83/521 min to a few minutes so
+    /// the glide is actually perceptible. 5 and 8 are coprime, so the combined
+    /// path doesn't repeat for ~40 minutes — longer than it stays interesting.
+    private static let driftPeriodX = 5.0
+    private static let driftPeriodY = 8.0
+    /// Full travel per axis, big enough to read as motion over a minute yet
+    /// clamped so small displays never drift more than 10% of their smaller
+    /// dimension. On the faster (X) axis that's ~48 pt of travel a minute.
     private var driftAmplitude: CGSize {
-        let cap = min(bounds.width, bounds.height) * 0.05
-        return CGSize(width: min(32, cap), height: min(48, cap))
+        let cap = min(bounds.width, bounds.height) * 0.10
+        return CGSize(width: min(120, cap), height: min(80, cap))
     }
 
     /// Triangular wave: sweeps 0 → amplitude → 0 over one period.
@@ -273,6 +332,10 @@ final class ShieldContentView: NSView {
 
     // MARK: Wander (DeskClock relocation)
 
+    /// Relocate this often (whole wall-clock minutes). Short enough that a wander
+    /// is easy to catch in a normal lock, long enough not to nag.
+    private static let wanderIntervalMinutes = 2
+
     private func relocate(animated: Bool) {
         let size = stack.fittingSize
         let travel = CGSize(
@@ -287,16 +350,17 @@ final class ShieldContentView: NSView {
             setStackOffset(target, animated: false)
             return
         }
-        // DeskClock pattern: fade out, teleport, fade back in.
+        // DeskClock pattern: fade out, teleport, fade back in. ~1.4 s a side so
+        // the clock is only briefly absent, not gone for six seconds.
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 3.0
+            context.duration = 1.4
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             stack.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             guard let self else { return }
             self.setStackOffset(target, animated: false)
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 3.0
+                context.duration = 1.4
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 self.stack.animator().alphaValue = self.isDimmed ? 0.5 : 1.0
             }
@@ -352,6 +416,38 @@ final class ShieldContentView: NSView {
             context.duration = 0.15
             stack.animator().alphaValue = 1.0
             hintLabel.animator().alphaValue = 1.0
+        }
+    }
+
+    // MARK: Protection notice
+
+    /// A plain-language line naming what's active — "Screen protection ·
+    /// wander + auto-dim". Nil when nothing is on (so no notice appears).
+    private static func protectionSummary(motion: ShieldMotionStyle, dimDuration: TimeInterval) -> String? {
+        var parts: [String] = []
+        switch motion {
+        case .drift: parts.append("drift")
+        case .wander: parts.append("wander")
+        case .off: break
+        }
+        if dimDuration > 0 { parts.append("auto-dim") }
+        guard !parts.isEmpty else { return nil }
+        return "Screen protection · " + parts.joined(separator: " + ")
+    }
+
+    /// Fade the notice in on lock, hold it briefly, then fade it away — a
+    /// transient confirmation that leaves nothing static to burn in.
+    private func flashProtectionNotice() {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.5
+            noticeLabel.animator().alphaValue = 0.45
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 1.0
+                self.noticeLabel.animator().alphaValue = 0
+            }
         }
     }
 

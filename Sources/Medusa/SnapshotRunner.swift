@@ -82,25 +82,32 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
     /// message goes through the registration domain, so it never touches the
     /// user's saved settings.
     ///
-    /// Alongside the doc image, three burn-in-protection variants render with
-    /// the drift phase frozen (or the dim state forced), and each variant's
-    /// stack frame is logged — so drift deltas and the dim alphas can be
-    /// asserted from the run output instead of pixel-diffing.
+    /// Alongside the doc image, burn-in-protection variants render with the
+    /// motion style forced and the drift phase frozen (or the dim state forced),
+    /// and each variant's stack frame is logged — so drift deltas, a real wander
+    /// offset, and the dim alphas can be asserted from the run output instead of
+    /// pixel-diffing. The motion override is a test seam; the real app reads the
+    /// saved setting once per lock.
     private func captureShield() {
         UserDefaults.standard.register(defaults: [
             AppSettings.Keys.lockMessage: "Back in 10 — the agents keep working"
         ])
-        // (name, frozen drift phase in wall-clock minutes, start dimmed)
-        let variants: [(name: String, minutes: Double?, dimmed: Bool)] = [
-            ("lock-screen", nil, false),
-            ("lock-screen-drift-a", 0, false),
-            ("lock-screen-drift-b", 41.5, false),
-            ("lock-screen-dimmed", 0, true)
+        // (name, frozen drift phase in wall-clock minutes, start dimmed, motion).
+        // Drift phases 0 and 2.5 are the two ends of the X zigzag (period 5 min),
+        // so the two drift shots sit at opposite edges of the travel box.
+        let variants: [(name: String, minutes: Double?, dimmed: Bool, motion: ShieldMotionStyle)] = [
+            ("lock-screen", nil, false, .wander),
+            ("lock-screen-drift-a", 0, false, .drift),
+            ("lock-screen-drift-b", 2.5, false, .drift),
+            ("lock-screen-wander", nil, false, .wander),
+            ("lock-screen-dimmed", 0, true, .drift)
         ]
         captureShieldVariants(variants)
     }
 
-    private func captureShieldVariants(_ variants: [(name: String, minutes: Double?, dimmed: Bool)]) {
+    private func captureShieldVariants(
+        _ variants: [(name: String, minutes: Double?, dimmed: Bool, motion: ShieldMotionStyle)]
+    ) {
         guard let variant = variants.first else {
             exit(0)
         }
@@ -118,7 +125,8 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         let content = ShieldContentView(
             frame: NSRect(origin: .zero, size: size),
             referenceMinutes: variant.minutes,
-            dimImmediately: variant.dimmed
+            dimImmediately: variant.dimmed,
+            motionOverride: variant.motion
         )
         window.contentView = content
         window.orderFront(nil)

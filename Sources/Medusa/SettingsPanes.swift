@@ -152,12 +152,12 @@ struct LockScreenPane: View {
     @AppStorage(AppSettings.Keys.showHint) private var showHint = true
     @AppStorage(AppSettings.Keys.lockMessage) private var lockMessage = ""
     @AppStorage(AppSettings.Keys.keepAwake) private var keepAwake = true
-    @AppStorage(AppSettings.Keys.shieldMotionStyle) private var motionStyle = ShieldMotionStyle.drift.rawValue
-    @AppStorage(AppSettings.Keys.shieldDimMinutes) private var dimMinutes = 10
+    @AppStorage(AppSettings.Keys.shieldMotionStyle) private var motionStyle = ShieldMotionStyle.wander.rawValue
+    @AppStorage(AppSettings.Keys.shieldDimMinutes) private var dimMinutes = 5
 
     private static let motionChoices: [(style: ShieldMotionStyle, label: String)] = [
-        (.drift, "Subtle drift"),
         (.wander, "Wander"),
+        (.drift, "Gentle drift"),
         (.off, "Off")
     ]
 
@@ -178,7 +178,7 @@ struct LockScreenPane: View {
                     showDate: showDate,
                     showHint: showHint,
                     message: lockMessage,
-                    motion: ShieldMotionStyle(rawValue: motionStyle) ?? .drift,
+                    motion: ShieldMotionStyle(rawValue: motionStyle) ?? .wander,
                     dimEnabled: dimMinutes > 0
                 )
                 .listRowInsets(EdgeInsets())
@@ -215,10 +215,11 @@ struct LockScreenPane: View {
             } header: {
                 Text("Screen Protection")
             } footer: {
-                Text("Keeps long locks kind to OLED displays. Subtle drift moves the "
-                    + "clock imperceptibly; Wander relocates it every 15 minutes; "
-                    + "dimming halves its brightness once you've stepped away. "
-                    + "Changes apply from the next lock.")
+                Text("Keeps long locks kind to OLED displays. Wander jumps the clock "
+                    + "to a new spot every couple of minutes; Gentle drift glides it "
+                    + "slowly around; dimming fades it once you've stepped away. On "
+                    + "lock, a brief note confirms what's on. Changes apply from the "
+                    + "next lock.")
             }
 
             Section {

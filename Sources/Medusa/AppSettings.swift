@@ -44,8 +44,8 @@ enum AppSettings {
             Keys.showDate: true,
             Keys.showHint: true,
             Keys.lockMessage: "",
-            Keys.shieldMotionStyle: ShieldMotionStyle.drift.rawValue,
-            Keys.shieldDimMinutes: 10
+            Keys.shieldMotionStyle: ShieldMotionStyle.wander.rawValue,
+            Keys.shieldDimMinutes: 5
         ])
     }
 
@@ -82,10 +82,11 @@ enum AppSettings {
     /// Optional note shown on the lock screen ("Back in 10 — render running").
     static var lockMessage: String { defaults.string(forKey: Keys.lockMessage) ?? "" }
 
-    /// Burn-in protection: how the lock-screen content moves. Defaults to the
-    /// sub-perceptual drift so OLED panels are safe out of the box.
+    /// Burn-in protection: how the lock-screen content moves. Defaults to
+    /// Wander — the strongest, and visibly obvious, positional spread — so OLED
+    /// panels are protected out of the box and you can *see* it working.
     static var shieldMotion: ShieldMotionStyle {
-        ShieldMotionStyle(rawValue: defaults.string(forKey: Keys.shieldMotionStyle) ?? "") ?? .drift
+        ShieldMotionStyle(rawValue: defaults.string(forKey: Keys.shieldMotionStyle) ?? "") ?? .wander
     }
 
     /// Burn-in protection: dim the lock-screen text after this long. 0 = never.
@@ -96,9 +97,11 @@ enum AppSettings {
 
 /// How the lock-screen content stack moves to spread OLED wear.
 enum ShieldMotionStyle: String {
-    /// AOSP-style zigzag of the center constraints — invisible in practice.
+    /// AOSP-style incommensurate zigzag of the center constraints, tuned to be
+    /// gently visible — the clock glides slowly around a travel box.
     case drift
-    /// DeskClock-style relocation to a random point every 15 minutes.
+    /// DeskClock-style relocation to a random point every couple of minutes,
+    /// with a fade-teleport-fade. The strongest positional spread.
     case wander
     /// Static center, today's pre-protection behavior.
     case off

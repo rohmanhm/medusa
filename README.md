@@ -38,10 +38,11 @@ login password.
   hot-plug and resolution changes.
 - **Stays awake** — an IOKit power assertion keeps the display on and prevents
   idle sleep so your tasks don't pause (toggleable).
-- **OLED-friendly** — the lock display drifts imperceptibly (the same
-  burn-in-prevention pattern Android ships) and dims to half brightness after
-  10 minutes, so hours under the shield never park static pixels on your
-  panel. Motion style and dim timing are adjustable in Settings → Lock Screen.
+- **OLED-friendly** — the lock display wanders to a new spot every couple of
+  minutes (or drifts gently, your pick) and dims to half brightness after a few
+  idle minutes, so hours under the shield never park static pixels on your
+  panel. A brief note on lock confirms what's on. Motion style and dim timing
+  are adjustable in Settings → Lock Screen.
 - **Global hotkey** — ⌘⇧L by default, recordable to any chord in Settings.
 - **Auto-updates** — Medusa checks for new releases daily and updates itself
   in place (Sparkle 2, EdDSA-signed feed); "Check for Updates…" lives in the
