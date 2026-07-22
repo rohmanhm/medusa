@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Builds Medusa and assembles a runnable, ad-hoc-signed .app bundle.
+# Builds Medusa and assembles a runnable, signed .app bundle.
 #
 # Identity: local by default, so day-to-day rebuilds never collide with a
 # release install in System Settings → Privacy (TCC grants are keyed by
-# bundle ID; the display name is what you see in the list).
+# code signature + bundle ID; the display name is what you see in the list).
 #
 #   ./scripts/build-app.sh                 → build/Medusa Local.app
 #                                            org.medusa.Medusa.local
@@ -14,14 +14,17 @@
 # release.sh always sets MEDUSA_RELEASE=1; you almost never need to set it
 # by hand.
 #
-# Signing: ad-hoc by default (`codesign -s -`) — no prompts, always works, and
-# is enough to run locally and receive the Accessibility / Input Monitoring TCC
-# grants. The only cost is that the ad-hoc hash changes each build, so a rebuild
-# forces you to re-grant the two permissions.
+# Signing (local builds):
+#   Prefer a stable Apple Development identity when one is in the keychain.
+#   TCC grants stick across rebuilds only when the *same* signing identity
+#   re-signs the same bundle ID — ad-hoc hashes change every build, which is
+#   why Accessibility / Input Monitoring used to ask again every launch.
 #
-# If you rebuild often, sign with a stable identity instead so grants persist:
-#   MEDUSA_SIGN_IDENTITY="Apple Development: You (TEAMID)" ./scripts/build-app.sh
-# The first such build shows a one-time keychain prompt — click "Always Allow".
+#   Auto-picks the first "Apple Development: …" identity. Override with:
+#     MEDUSA_SIGN_IDENTITY="Apple Development: You (TEAMID)" ./scripts/build-app.sh
+#     MEDUSA_SIGN_IDENTITY=- ./scripts/build-app.sh   # force ad-hoc
+#   First stable-identity build may show a one-time keychain prompt —
+#   click "Always Allow".
 #
 # For signed & notarized *release* builds (Developer ID + notarization), see the
 # distribution research at .scratch/v1-spec/research/04-distribution.md.
@@ -43,6 +46,24 @@ else
 	DISPLAY_NAME="Medusa Local"
 fi
 APP="$ROOT/build/${APP_NAME}.app"
+
+# Resolve signing identity. Release always passes MEDUSA_SIGN_IDENTITY via
+# release.sh. Local builds auto-detect Apple Development so TCC grants
+# survive rebuilds; "-" forces ad-hoc; empty after detect falls back to ad-hoc.
+if [[ -z "${MEDUSA_SIGN_IDENTITY+x}" ]]; then
+	# Unset → auto for local, leave empty for release (release.sh always sets it).
+	if [[ "${MEDUSA_RELEASE:-}" != "1" ]]; then
+		MEDUSA_SIGN_IDENTITY="$(
+			security find-identity -v -p codesigning \
+				| awk -F '"' '/Apple Development/ {print $2; exit}'
+		)"
+	else
+		MEDUSA_SIGN_IDENTITY=""
+	fi
+fi
+if [[ "${MEDUSA_SIGN_IDENTITY:-}" == "-" ]]; then
+	MEDUSA_SIGN_IDENTITY=""
+fi
 
 echo "==> swift build -c $CONFIG"
 cd "$ROOT"
@@ -96,12 +117,16 @@ FW="$APP/Contents/Frameworks/Sparkle.framework"
 IDENTITY="${MEDUSA_SIGN_IDENTITY:-}"
 if [[ -n "$IDENTITY" ]]; then
 	echo "==> signing with stable identity ($IDENTITY) — TCC grants will persist"
+	# Local Apple Development builds don't need the hardened-runtime flags
+	# that notarized Developer ID builds require; keep them for any real
+	# certificate so nested Sparkle helpers stay consistent either way.
 	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW/Versions/B/Autoupdate"
 	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW/Versions/B/Updater.app"
 	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$FW"
 	codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 else
-	echo "==> ad-hoc signing (re-grant permissions after each rebuild; see header to make them persist)"
+	echo "==> ad-hoc signing (TCC grants will NOT persist across rebuilds)"
+	echo "    tip: install an Apple Development cert, or set MEDUSA_SIGN_IDENTITY"
 	codesign --force --sign - "$FW/Versions/B/Autoupdate"
 	codesign --force --sign - "$FW/Versions/B/Updater.app"
 	codesign --force --sign - "$FW"
@@ -113,5 +138,10 @@ echo "Built: $APP"
 echo "       $DISPLAY_NAME  ($BUNDLE_ID)"
 if [[ "${MEDUSA_RELEASE:-}" != "1" ]]; then
 	echo "       local identity — shows as \"$DISPLAY_NAME\" in Privacy settings"
+fi
+if [[ -n "$IDENTITY" ]]; then
+	echo "       signed: $IDENTITY"
+else
+	echo "       signed: ad-hoc (permissions reset on every rebuild)"
 fi
 echo "Run:   open \"$APP\"    (or double-click it in Finder)"
