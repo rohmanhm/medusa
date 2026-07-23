@@ -162,12 +162,16 @@ from "just works" to "last resort":
 
 1. **Try again** — canceling the unlock dialog always re-arms; touch input again
    and the dialog comes back (Medusa re-activates itself so it reliably
-   re-appears even as a background menu-bar app).
+   re-appears even as a background menu-bar app). A stuck in-flight auth is
+   cleared on sleep/wake so a cancel can never leave the cue dead.
 2. **Fail open on a wedge** — if the system can't present the auth dialog at all
    (not merely a user cancel), Medusa releases rather than trap you. Repeated
    system-side auth failures release too.
-3. **Backstop auto-release** — an absolute dead-man's-switch lifts the lock
-   after 30 minutes no matter what (configurable in Settings → General, from
+3. **System unlock releases Medusa** — if you power-button into macOS's own lock
+   screen and authenticate there, Medusa honors that unlock and drops its
+   shield. It will not reappear on top of a session you already paid for.
+4. **Backstop auto-release** — an absolute dead-man's-switch lifts the lock
+   after 4 hours no matter what (configurable in Settings → General, from
    15 minutes to never). It rarely fires, because Touch ID lifts the lock in
    seconds — it's the guarantee that force-shutdown is never required.
 
@@ -177,7 +181,8 @@ usable as well:
 - **⌘⌥⎋ (Force Quit)** — the Force Quit window stays clickable; force-quit
   Medusa and input returns instantly.
 - **Power button / Touch ID sensor** — wired to the Secure Enclave, never part
-  of the event stream.
+  of the event stream. Power-button → system lock → system unlock also releases
+  Medusa (see above).
 - **SSH from another machine** — `pkill -f Medusa.app` kills it remotely.
 
 Medusa is honest about being an input shield rather than a lock-screen
@@ -191,7 +196,7 @@ replacement — but unlike a raw event-tap locker, it will not strand you.
 | Unlock under lock | Touch ID never touches the event stream; password typing bypasses the tap via macOS Secure Event Input; mouse is always live so the dialog stays clickable. |
 | Lock screen | One borderless `NSWindow` per display at `CGShieldingWindowLevel()`, dropped to the screen-saver level during auth so the system dialog shows on top. |
 | Stay awake | `IOPMAssertionCreateWithName` with `PreventUserIdleDisplaySleep`. |
-| Never trap | The unlock flow classifies every `LAError`: user cancels re-arm (so a bystander can't pop the lock), but a dialog the system can't present fails open. A 30-minute backstop timer force-releases as a last resort. |
+| Never trap | The unlock flow classifies every `LAError`: user cancels re-arm (so a bystander can't pop the lock), but a dialog the system can't present fails open. A system-lock unlock (`com.apple.screenIsUnlocked`) releases Medusa. A 4-hour backstop timer force-releases as a last resort. |
 | Reliability | The tap re-enables itself on `tapDisabledByTimeout`/`ByUserInput`, backed by a 1 s watchdog; if the tap can't be created, Medusa **fails open** and never shows a shield that isn't blocking. |
 
 The design decisions and the research behind them live under

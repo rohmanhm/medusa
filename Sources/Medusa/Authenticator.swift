@@ -31,6 +31,11 @@ enum AuthOutcome {
 /// result.
 final class Authenticator {
     private(set) var isAuthenticating = false
+    /// Retained so `reset()` can invalidate an in-flight evaluation (sleep mid-
+    /// dialog, system lock takeover). Without this, a lost completion leaves
+    /// `isAuthenticating == true` forever and every subsequent unlock cue is a
+    /// silent no-op — the cancel-then-stuck trap.
+    private var activeContext: LAContext?
 
     func authenticate(reason: String, completion: @escaping (AuthOutcome) -> Void) {
         guard !isAuthenticating else { return }
@@ -39,39 +44,31 @@ final class Authenticator {
         let context = LAContext()
         context.localizedFallbackTitle = "Enter Password"
         context.localizedCancelTitle = "Cancel"
+        activeContext = context
 
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { [weak self] success, error in
             DispatchQueue.main.async {
-                self?.isAuthenticating = false
-                completion(Self.classify(success: success, error: error))
+                guard let self else { return }
+                // A reset() may have already cleared this evaluation. Drop the
+                // stale completion so it can't fight a newer attempt.
+                guard self.activeContext === context else { return }
+                self.activeContext = nil
+                self.isAuthenticating = false
+                completion(LockPolicy.classify(success: success, error: error))
             }
         }
     }
 
-    /// Maps an `evaluatePolicy` result onto the three-way recovery decision.
-    /// The mapping is the security boundary of the whole failsafe: user-driven
-    /// outcomes keep the lock up; only genuine system-can't-present failures
-    /// release it.
-    private static func classify(success: Bool, error: Error?) -> AuthOutcome {
-        if success { return .success }
-        guard let code = (error as? LAError)?.code else { return .userCanceledOrFailed }
-
-        switch code {
-        case .userCancel, .userFallback, .authenticationFailed,
-             .biometryLockout, .biometryNotAvailable, .biometryNotEnrolled:
-            // Human backed out, or biometry is unusable but the password path
-            // still exists. Recoverable — never auto-release on these.
-            return .userCanceledOrFailed
-
-        case .passcodeNotSet, .notInteractive, .invalidContext:
-            // No credential to check, or we simply cannot present UI from here.
-            // Releasing is the only non-trapping choice.
-            return .cannotPresentEver
-
-        default:
-            // systemCancel, appCancel, and anything unknown: the system took the
-            // dialog away. Retry once; the caller releases if it recurs.
-            return .cannotPresentNow
-        }
+    /// Abort any in-flight evaluation and clear the busy flag. Called when a
+    /// session reaffirm or system-lock takeover means the current dialog is no
+    /// longer reachable — without this, the next touch is swallowed by
+    /// `guard !isAuthenticating`.
+    func reset() {
+        let context = activeContext
+        activeContext = nil
+        isAuthenticating = false
+        // invalidate() cancels evaluatePolicy and (eventually) fires its reply;
+        // we already nil'd activeContext so that reply is ignored above.
+        context?.invalidate()
     }
 }

@@ -7,9 +7,9 @@ import AppKit
 /// - **Fail open** — if we can't actually block input, never leave a shield up
 ///   that only *looks* like it's blocking.
 /// - **Never trap** — no single misbehaving unlock path may hold the machine
-///   hostage. The re-activation fix, the wedge detector, and the backstop timer
-///   are layered so that "force-shutdown" is never the only way out — without
-///   handing a bystander a cheap unlock.
+///   hostage. The re-activation fix, the wedge detector, the system-unlock
+///   release, and the backstop timer are layered so that "force-shutdown" is
+///   never the only way out — without handing a bystander a cheap unlock.
 final class LockController {
     private let tap = InputTap()
     private let shield = ShieldController()
@@ -34,6 +34,11 @@ final class LockController {
     /// Keep-awake failure is reported at most once per lock so sleep/wake re-arm
     /// doesn't spam the same alert every time the display cycles.
     private var keepAwakeWarned = false
+
+    /// Latched from `com.apple.screenIsLocked` / `…Unlocked`. While true, wake
+    /// reaffirm is suppressed so we never cover loginwindow — and a subsequent
+    /// system unlock releases Medusa entirely (the power-button trap fix).
+    private var systemScreenLocked = false
 
     private(set) var isLocked = false
 
@@ -81,6 +86,7 @@ final class LockController {
 
         wedgeCount = 0
         keepAwakeWarned = false
+        systemScreenLocked = false
         if AppSettings.keepAwake {
             reportKeepAwakeFailureIfNeeded(held: power.begin())
         }
@@ -125,54 +131,71 @@ final class LockController {
 
         auth.authenticate(reason: "unlock your Mac") { [weak self] outcome in
             guard let self, self.isLocked else { return }
-            switch outcome {
-            case .success:
+            let (reaction, nextWedge) = Self.reaction(for: outcome, priorWedge: self.wedgeCount)
+            self.wedgeCount = nextWedge
+            switch reaction {
+            case .unlock, .unlockFailOpen:
                 self.unlock()
 
-            case .userCanceledOrFailed:
+            case .rearmAndStayLocked:
                 // Normal: the user backed out or a fingerprint missed. Stay
                 // locked and let the next touch summon the dialog again.
-                self.wedgeCount = 0
                 self.shield.setAuthMode(false)
                 self.tap.rearm()
 
-            case .cannotPresentNow:
+            case .retryAuthSoon:
                 // The system took the dialog away. Try once more ourselves; if
-                // it happens again, the machine can't show auth — fail open.
-                self.wedgeCount += 1
-                if self.wedgeCount >= Self.wedgeReleaseThreshold {
-                    self.unlock()
-                } else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                        self?.beginAuth()
-                    }
+                // it happens again, the machine can't show auth — fail open
+                // (handled via nextWedge on the subsequent outcome).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.beginAuth()
                 }
-
-            case .cannotPresentEver:
-                // No credential, or UI can't be shown at all — never trap.
-                self.unlock()
             }
+        }
+    }
+
+    /// Bridge `AuthOutcome` → `LockPolicy.AuthReaction` so the controller and the
+    /// pure policy harness share one decision table.
+    private static func reaction(
+        for outcome: AuthOutcome,
+        priorWedge: Int
+    ) -> (LockPolicy.AuthReaction, Int) {
+        switch outcome {
+        case .success:
+            return (.unlock, 0)
+        case .userCanceledOrFailed:
+            return (.rearmAndStayLocked, 0)
+        case .cannotPresentNow:
+            let next = priorWedge + 1
+            if next >= wedgeReleaseThreshold {
+                return (.unlockFailOpen, next)
+            }
+            return (.retryAuthSoon, next)
+        case .cannotPresentEver:
+            return (.unlockFailOpen, priorWedge)
         }
     }
 
     private func unlock() {
         stopBackstop()
         stopSessionObservers()
+        auth.reset()
         tap.stop()
         shield.hide()
         power.end()
         wedgeCount = 0
         keepAwakeWarned = false
+        systemScreenLocked = false
         isLocked = false
         onStateChange?()
     }
 
-    // MARK: - Sleep / wake / session re-arm
+    // MARK: - Sleep / wake / session re-arm / system lock
 
-    /// Sleep, wake, and fast-user-switch can disable the event tap, drop the
-    /// power assertion, or leave overlays behind the system lock UI. Re-arm so
-    /// a long lock that brushes display sleep doesn't look like "Medusa died
-    /// and macOS took over."
+    /// Sleep, wake, fast-user-switch, and the system lock screen can disable the
+    /// event tap, drop the power assertion, leave overlays behind loginwindow,
+    /// or — the trap — leave Medusa locked after the human already authenticated
+    /// at the system boundary. Observe all of it and route through `LockPolicy`.
     private func startSessionObservers() {
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(
@@ -193,20 +216,87 @@ final class LockController {
             name: NSWorkspace.screensDidWakeNotification,
             object: nil
         )
+
+        // Power-button trap fix: macOS posts these when its own lock screen
+        // appears / is dismissed. Without them, a system unlock leaves
+        // isLocked=true and the next didWake reaffirms the shield over a
+        // session the user already paid for — force-shutdown was the only exit.
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(
+            self,
+            selector: #selector(systemScreenDidLock),
+            name: Notification.Name("com.apple.screenIsLocked"),
+            object: nil
+        )
+        distributed.addObserver(
+            self,
+            selector: #selector(systemScreenDidUnlock),
+            name: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil
+        )
     }
 
     private func stopSessionObservers() {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
-    @objc private func systemDidWake() { reaffirmLock() }
-    @objc private func sessionDidBecomeActive() { reaffirmLock() }
-    @objc private func screensDidWake() { reaffirmLock() }
+    @objc private func systemDidWake() { handleSessionEvent(.didWake) }
+    @objc private func sessionDidBecomeActive() { handleSessionEvent(.sessionDidBecomeActive) }
+    @objc private func screensDidWake() { handleSessionEvent(.screensDidWake) }
+    @objc private func systemScreenDidLock() {
+        // Distributed notifications can arrive off the main thread; hop first.
+        DispatchQueue.main.async { [weak self] in self?.handleSessionEvent(.systemScreenDidLock) }
+    }
+    @objc private func systemScreenDidUnlock() {
+        DispatchQueue.main.async { [weak self] in self?.handleSessionEvent(.systemScreenDidUnlock) }
+    }
 
-    /// Re-hold the keep-awake assertion, re-enable the tap, and re-front the
-    /// shields. Safe to call spuriously — every step is idempotent while locked.
+    private func handleSessionEvent(_ event: LockPolicy.SessionEvent) {
+        // Latch the system-lock flag before consulting policy so a wake that
+        // races with screenIsLocked sees the right state.
+        switch event {
+        case .systemScreenDidLock:
+            systemScreenLocked = true
+            // The system dialog replaced ours; any in-flight LA evaluation is
+            // unreachable. Clear it so a later Medusa cue isn't a silent no-op.
+            auth.reset()
+            shield.setAuthMode(false)
+            tap.rearm()
+        case .systemScreenDidUnlock:
+            systemScreenLocked = false
+        case .didWake, .screensDidWake, .sessionDidBecomeActive:
+            break
+        }
+
+        let reaction = LockPolicy.sessionReaction(
+            event: event,
+            isLocked: isLocked,
+            systemScreenLocked: systemScreenLocked
+        )
+        switch reaction {
+        case .release:
+            unlock()
+        case .reaffirm:
+            reaffirmLock()
+        case .ignore:
+            break
+        }
+    }
+
+    /// Re-hold the keep-awake assertion, re-enable the tap, clear any stuck auth
+    /// flag, and re-front the shields. Safe to call spuriously — every step is
+    /// idempotent while locked.
     private func reaffirmLock() {
         guard isLocked else { return }
+        // Sleep mid-dialog can leave isAuthenticating latched if the LA
+        // completion was lost or delayed. Reset so the next touch re-presents
+        // instead of dying in `guard !isAuthenticating`.
+        if auth.isAuthenticating {
+            auth.reset()
+            shield.setAuthMode(false)
+            tap.rearm()
+        }
         if AppSettings.keepAwake {
             reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
         }
