@@ -27,11 +27,15 @@ final class SettingsWindowController: NSWindowController {
             }
         }
 
-        /// Fixed pane size; the tab controller animates the window between
-        /// these when switching tabs, System Settings-style.
+        /// Window content size per tab (System Settings-style animation on switch).
+        /// Panes fill this host with `maxWidth/maxHeight: .infinity` + top
+        /// alignment — do **not** put a second fixed height on the Form, or
+        /// NSHostingController centers the overflow and clips the first section
+        /// under the tab bar.
         var size: NSSize {
             switch self {
-            case .general: return NSSize(width: 590, height: 560)
+            // Tall enough for Startup → Updates without clipping under the toolbar.
+            case .general: return NSSize(width: 590, height: 720)
             case .lockScreen: return NSSize(width: 590, height: 780)
             case .permissions: return NSSize(width: 590, height: 370)
             }

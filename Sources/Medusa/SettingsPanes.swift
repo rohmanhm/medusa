@@ -116,7 +116,10 @@ struct GeneralPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 680)
+        // Fill the tab host from the top. A fixed height taller than
+        // SettingsWindow.Tab.general.size used to center the Form in the
+        // hosting view and clip Startup under the tab bar.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     static var versionString: String {
@@ -268,7 +271,7 @@ struct LockScreenPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 780)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -484,7 +487,7 @@ struct PermissionsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 370)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onReceive(poll) { _ in
             accessibility = Permissions.hasAccessibility()
             inputMonitoring = Permissions.hasInputMonitoring()
