@@ -8,6 +8,8 @@ struct GeneralPane: View {
 
     @AppStorage(AppSettings.Keys.lockOnLaunch) private var lockOnLaunch = false
     @AppStorage(AppSettings.Keys.backstopMinutes) private var backstopMinutes = 240
+    @AppStorage(AppSettings.Keys.systemLockPreemptEnabled) private var systemLockPreempt = false
+    @AppStorage(AppSettings.Keys.systemLockPreemptIdleMinutes) private var preemptIdleMinutes = 5
 
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginItemError: String?
@@ -19,6 +21,14 @@ struct GeneralPane: View {
         (30, "30 minutes"),
         (15, "15 minutes"),
         (0, "Never")
+    ]
+
+    private static let preemptIdleChoices: [(minutes: Int, label: String)] = [
+        (1, "1 minute"),
+        (2, "2 minutes"),
+        (5, "5 minutes"),
+        (10, "10 minutes"),
+        (15, "15 minutes")
     ]
 
     var body: some View {
@@ -53,6 +63,32 @@ struct GeneralPane: View {
             }
 
             Section {
+                Toggle("Engage Medusa when idle", isOn: $systemLockPreempt)
+                    .onChange(of: systemLockPreempt) { enabled in
+                        // Re-arm the one-shot race-loss warning when the user
+                        // deliberately turns the feature back on.
+                        if enabled {
+                            AppSettings.systemLockPreemptWarned = false
+                        }
+                    }
+                Picker("Engage after", selection: $preemptIdleMinutes) {
+                    ForEach(Self.preemptIdleChoices, id: \.minutes) { choice in
+                        Text(choice.label).tag(choice.minutes)
+                    }
+                }
+                .disabled(!systemLockPreempt)
+            } header: {
+                Text("Auto-Lock")
+            } footer: {
+                Text("When on, Medusa locks itself after this much idle time (and "
+                    + "best-effort on ⌃⌘Q) so long work keeps running under the shield. "
+                    + "Set the idle time shorter than your display sleep so Medusa wins "
+                    + "the race. Does not replace the macOS lock screen — if the system "
+                    + "locks first, Medusa stays out of the way. Auto-locks always keep "
+                    + "the Mac awake for that session.")
+            }
+
+            Section {
                 Picker("Fail-safe auto-unlock", selection: $backstopMinutes) {
                     ForEach(Self.backstopChoices, id: \.minutes) { choice in
                         Text(choice.label).tag(choice.minutes)
@@ -80,7 +116,7 @@ struct GeneralPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 590, height: 560)
+        .frame(width: 590, height: 680)
     }
 
     static var versionString: String {
@@ -256,7 +292,10 @@ private struct LockScreenPreview: View {
     private var demoActive: Bool { hasContent && (motion != .off || dimEnabled) }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+        // Frame-cadence timeline so the sped-up sine drift is a true glide,
+        // not a 0.5 s hop softened by an ease-in-out. Wander/dim still look
+        // right at display rate — their state is piecewise-constant.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
             let demo = Self.demo(
                 at: context.date.timeIntervalSinceReferenceDate,
                 motion: motion,
@@ -298,10 +337,9 @@ private struct LockScreenPreview: View {
                 }
                 .opacity(demo.stackOpacity)
                 .animation(.easeInOut(duration: 0.55), value: demo.stackOpacity)
+                // Drift: no implicit animation — position is already continuous
+                // at 60 Hz. Wander: nil too (teleport happens while alpha is 0).
                 .offset(demo.offset)
-                // Wander teleports while faded out, exactly like the shield;
-                // drift glides between minute steps.
-                .animation(motion == .drift ? .easeInOut(duration: 0.9) : nil, value: demo.offset)
                 .padding(.vertical, 24)
                 .frame(maxWidth: .infinity, minHeight: 150)
 
@@ -334,12 +372,11 @@ private struct LockScreenPreview: View {
 
         switch motion {
         case .drift:
-            // The real zigzag with seconds standing in for minutes: the
-            // 83/521-minute periods become 9/13-second sweeps of a preview-
-            // scaled wander box.
+            // Same continuous sine the shield uses, compressed into a few
+            // seconds so the full-box glide is obvious in the 150 pt preview.
             demo.offset = CGSize(
-                width: zigzag(t, amplitude: 44, period: 9) - 22,
-                height: zigzag(t, amplitude: 28, period: 13) - 14
+                width: glide(t, amplitude: 44, period: 9) - 22,
+                height: glide(t, amplitude: 28, period: 13) - 14
             )
         case .wander:
             // Relocate every 4 s: fade out for the last half-second of a slot,
@@ -363,11 +400,12 @@ private struct LockScreenPreview: View {
         var hintOpacity: Double = 1
     }
 
-    /// Same triangular wave the shield uses, in preview time.
-    private static func zigzag(_ t: Double, amplitude: Double, period: Double) -> Double {
-        let progress = t.truncatingRemainder(dividingBy: period) / period
-        let ramp = progress <= 0.5 ? progress * 2 : (1 - progress) * 2
-        return amplitude * ramp
+    /// Same continuous sine the shield uses, in preview time. Velocity eases
+    /// at the peaks — the old triangle's instant reverse read as stutter.
+    private static func glide(_ t: Double, amplitude: Double, period: Double) -> Double {
+        guard period > 0 else { return 0 }
+        let angle = (t / period) * 2.0 * Double.pi
+        return amplitude * (sin(angle) + 1) * 0.5
     }
 
     /// Deterministic hash-noise in 0..<1 so wander positions are stable per slot.

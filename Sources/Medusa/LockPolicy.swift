@@ -41,6 +41,12 @@ enum LockPolicy {
         /// Drop Medusa's lock entirely — the human already authenticated at the
         /// system boundary (or the session is no longer ours to hold).
         case release
+        /// Surrender the display and input path to macOS's lock screen **without**
+        /// clearing Medusa's locked state. Hide shields and stop the event tap so
+        /// loginwindow's password field is reachable; stay "locked" underneath so
+        /// a later system unlock still runs the release path (never-trap). Do **not**
+        /// re-front or re-arm while yielded — that is the password-field trap.
+        case yield
         /// No-op (still update any local "system screen locked" flag the
         /// controller tracks when the event is a system lock/unlock).
         case ignore
@@ -116,9 +122,12 @@ enum LockPolicy {
             // System auth succeeded. Honor it — drop Medusa.
             return .release
         case .systemScreenDidLock:
-            // macOS took over the display. Stay locked underneath; do not fight
-            // the system lock UI by re-fronting our shield on top of it.
-            return .ignore
+            // macOS took over the display. Merely "ignoring" reaffirm is not
+            // enough: a shield at CGShieldingWindowLevel and a live key-swallowing
+            // tap still sit on top of loginwindow and block the password field
+            // (force-shutdown was the only way out). Yield — hide + stop tap —
+            // while staying notionally locked so unlock still releases.
+            return .yield
         case .didWake, .screensDidWake, .sessionDidBecomeActive:
             // Display / machine came back. If the system lock screen is the one
             // currently owning the display, stay quiet — reaffirming would cover
@@ -128,5 +137,49 @@ enum LockPolicy {
             if systemScreenLocked { return .ignore }
             return .reaffirm
         }
+    }
+
+    // MARK: - System-lock preempt (idle / ⌃⌘Q → Medusa)
+
+    /// What the preempt monitor should do after sampling idle time or a chord.
+    enum PreemptAction: Equatable {
+        /// Stay idle; keep polling.
+        case none
+        /// Engage Medusa now (auto-lock path — keep-awake forced by the controller).
+        case autoLock
+    }
+
+    /// Idle crossed the threshold while the setting is on and Medusa is free.
+    static func idlePreempt(
+        enabled: Bool,
+        isLocked: Bool,
+        idleSeconds: TimeInterval,
+        thresholdSeconds: TimeInterval
+    ) -> PreemptAction {
+        guard enabled, !isLocked, thresholdSeconds > 0, idleSeconds >= thresholdSeconds else {
+            return .none
+        }
+        return .autoLock
+    }
+
+    /// ⌃⌘Q (or any configured lock chord) seen while the setting is on and free.
+    static func chordPreempt(enabled: Bool, isLocked: Bool) -> PreemptAction {
+        guard enabled, !isLocked else { return .none }
+        return .autoLock
+    }
+
+    /// macOS posted `com.apple.screenIsLocked` while Medusa was still unlocked.
+    /// We lost the race — never cover loginwindow; optionally warn once.
+    static func shouldWarnRaceLoss(
+        enabled: Bool,
+        isLocked: Bool,
+        alreadyWarned: Bool
+    ) -> Bool {
+        enabled && !isLocked && !alreadyWarned
+    }
+
+    /// Auto-locks from preempt always hold keep-awake; manual locks follow the toggle.
+    static func shouldHoldKeepAwake(forceKeepAwake: Bool, keepAwakeSetting: Bool) -> Bool {
+        forceKeepAwake || keepAwakeSetting
     }
 }

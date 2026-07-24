@@ -17,11 +17,13 @@ Two related ways Medusa held the machine hostage:
 | Event | While Medusa locked | Action |
 | --- | --- | --- |
 | User cancel / fingerprint miss | yes | Stay locked, re-arm cue |
-| `com.apple.screenIsLocked` | yes | Latch flag; clear stuck auth; do **not** re-front |
-| Wake while system lock is up | yes | **Ignore** (don't cover loginwindow) |
+| `com.apple.screenIsLocked` | yes | **Yield**: hide shields + stop input tap; latch flag; clear stuck auth; stay notionally locked |
+| Wake while system lock is up | yes | **Ignore** (don't re-front over loginwindow) |
 | `com.apple.screenIsUnlocked` | yes | **Release** Medusa |
 | Wake, no system lock | yes | Reaffirm tap + assertion + shields; clear stuck auth |
 | System can't present auth (×2) | yes | Fail open |
+
+**Yield is not ignore.** Ignoring reaffirm left the shield at `CGShieldingWindowLevel` and the key-swallowing tap alive, so loginwindow's password field was unreachable and force-shutdown was the only exit (2026-07-24 report).
 
 ## Feedback loop
 

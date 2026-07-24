@@ -18,16 +18,25 @@ import CoreGraphics
 /// - Keyboard/scroll stay swallowed for the whole lock. The system auth dialog
 ///   still receives typed passwords via macOS Secure Event Input, which routes
 ///   keystrokes around every event tap (Apple TN2150).
+/// - **Click or Enter always cues unlock.** Every intentional click / keyDown
+///   (including Return / keypad Enter) hops to main and asks the controller to
+///   present Touch ID. The controller is idempotent while a dialog is already
+///   up; we only coalesce cues within a single run-loop turn so a key-repeat
+///   storm doesn't enqueue hundreds of identical hops.
 /// - If the tap can't be created (missing permission), the caller must fail
 ///   open — never trap the user behind a shield that isn't actually blocking.
 final class InputTap {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var watchdog: Timer?
-    private var hasCuedAuth = false
+    /// Coalesces multi-event bursts (key repeat, click+keydown same turn) into
+    /// one main-queue hop. Cleared when that hop runs — never latched across
+    /// cancel / fail the way the old `hasCuedAuth` was (that latch is what made
+    /// a second Enter a silent no-op after a stuck first cue).
+    private var cueScheduled = false
 
-    /// Fired on the main thread the first time the user interacts while locked
-    /// — the cue to begin authentication.
+    /// Fired on the main thread when the user clicks or presses a key while
+    /// locked — the cue to present Touch ID / password.
     var onInteraction: (() -> Void)?
 
     private(set) var isActive = false
@@ -71,7 +80,7 @@ final class InputTap {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
 
-        hasCuedAuth = false
+        cueScheduled = false
         isActive = true
         startWatchdog()
         return true
@@ -87,13 +96,14 @@ final class InputTap {
         runLoopSource = nil
         tap = nil
         isActive = false
-        hasCuedAuth = false
+        cueScheduled = false
     }
 
-    /// Re-arm the "first interaction cues auth" behaviour after a failed unlock,
-    /// so the next key press or click summons the dialog again.
+    /// Clears any in-flight cue coalesce. Kept for call sites that historically
+    /// "re-armed" after cancel; with per-turn coalescing the next click/Enter
+    /// already cues without this, but calling it is always safe.
     func rearm() {
-        hasCuedAuth = false
+        cueScheduled = false
     }
 
     /// Re-enable the tap if the OS disabled it (sleep/wake, timeout, TCC
@@ -115,12 +125,12 @@ final class InputTap {
             break
         }
 
-        // The first intentional action (key press or mouse click) while locked
-        // cues authentication; `hasCuedAuth` debounces so we ask once per attempt
-        // and `rearm()` re-opens the cue after a canceled unlock.
-        if !hasCuedAuth, isCue(type) {
-            hasCuedAuth = true
-            DispatchQueue.main.async { [weak self] in self?.onInteraction?() }
+        // Click, Enter/Return, or any other keyDown → ask the controller to
+        // present Touch ID. Coalesce only within this run-loop turn; after the
+        // hop runs, the next intentional action cues again. The controller
+        // no-ops while a dialog is already in flight.
+        if isCue(type, event: event) {
+            scheduleCue()
         }
 
         // Mouse events ALWAYS pass through (see the type doc): the shield
@@ -134,7 +144,20 @@ final class InputTap {
         return nil
     }
 
-    private func isCue(_ type: CGEventType) -> Bool {
+    private func scheduleCue() {
+        guard !cueScheduled else { return }
+        cueScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.cueScheduled = false
+            self.onInteraction?()
+        }
+    }
+
+    /// Intentional unlock cues: any keyDown (Enter/Return included — keycodes 36
+    /// and 76 are just keyDowns like the rest) or mouse button down. keyUp /
+    /// flags / scroll never summon the dialog.
+    private func isCue(_ type: CGEventType, event: CGEvent) -> Bool {
         switch type {
         case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown:
             return true

@@ -23,6 +23,13 @@ enum AppSettings {
         static let lockMessage = "lockMessage"
         static let shieldMotionStyle = "shieldMotionStyle"
         static let shieldDimMinutes = "shieldDimMinutes"
+        /// Opt-in: idle / best-effort ⌃⌘Q engage Medusa instead of leaving the
+        /// session to stock idle-lock. Never replaces loginwindow.
+        static let systemLockPreemptEnabled = "systemLockPreemptEnabled"
+        /// Idle seconds (as minutes in the picker) before preempt auto-locks.
+        static let systemLockPreemptIdleMinutes = "systemLockPreemptIdleMinutes"
+        /// One-shot race-loss warning latch; reset when the setting is re-enabled.
+        static let systemLockPreemptWarned = "systemLockPreemptWarned"
     }
 
     /// Default shortcut: ⌘⇧L (keyCode 37 == "L" on the ANSI layout).
@@ -48,7 +55,10 @@ enum AppSettings {
             Keys.showHint: true,
             Keys.lockMessage: "",
             Keys.shieldMotionStyle: ShieldMotionStyle.wander.rawValue,
-            Keys.shieldDimMinutes: 5
+            Keys.shieldDimMinutes: 5,
+            Keys.systemLockPreemptEnabled: false,
+            Keys.systemLockPreemptIdleMinutes: 5,
+            Keys.systemLockPreemptWarned: false
         ])
     }
 
@@ -95,6 +105,22 @@ enum AppSettings {
     /// Burn-in protection: dim the lock-screen text after this long. 0 = never.
     static var shieldDimDuration: TimeInterval {
         TimeInterval(defaults.integer(forKey: Keys.shieldDimMinutes) * 60)
+    }
+
+    /// When true, idle (and best-effort ⌃⌘Q) engage Medusa before stock idle-lock.
+    static var systemLockPreemptEnabled: Bool {
+        defaults.bool(forKey: Keys.systemLockPreemptEnabled)
+    }
+
+    /// Idle duration before preempt auto-locks. Default 5 minutes.
+    static var systemLockPreemptIdleDuration: TimeInterval {
+        TimeInterval(defaults.integer(forKey: Keys.systemLockPreemptIdleMinutes) * 60)
+    }
+
+    /// Whether the user has already been told we lost a race to loginwindow.
+    static var systemLockPreemptWarned: Bool {
+        get { defaults.bool(forKey: Keys.systemLockPreemptWarned) }
+        set { defaults.set(newValue, forKey: Keys.systemLockPreemptWarned) }
     }
 }
 

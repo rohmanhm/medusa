@@ -29,3 +29,7 @@ swift build                            # clean
 ```
 
 Harness also greps production source for the distributed-notification observers so deleting them goes red again.
+
+### Follow-up (2026-07-24)
+
+Release-on-unlock alone was not enough: while the system lock was *up*, shield + tap still blocked the password field. Fixed as yield-on-system-lock in [02-loginwindow-password-block](02-loginwindow-password-block.md).

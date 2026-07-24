@@ -5,6 +5,8 @@
 ///   1. Cancel Touch ID → dialog never comes back.
 ///   2. Power-button → system lock → system unlock → Medusa reappears and
 ///      traps the machine until force-shutdown.
+///   3. System lock while Medusa locked → password field unreachable because
+///      Medusa's shield + key-swallowing tap still own the session (yield fix).
 ///
 /// Mirrors Sources/Medusa/LockPolicy.swift + LockController session wiring.
 /// Run:  swift scripts/unlock-trap-loop.swift
@@ -31,7 +33,7 @@ enum SessionEvent: Equatable {
 }
 
 enum SessionReaction: Equatable {
-    case reaffirm, release, ignore
+    case reaffirm, release, yield, ignore
 }
 
 func classify(success: Bool, laCode: LAError.Code?) -> AuthOutcome {
@@ -76,7 +78,9 @@ func sessionReaction(
     case .systemScreenDidUnlock:
         return .release
     case .systemScreenDidLock:
-        return .ignore
+        // Must yield (hide shield + stop tap). Plain ignore leaves Medusa on top
+        // of loginwindow and blocks the password field.
+        return .yield
     case .didWake, .screensDidWake, .sessionDidBecomeActive:
         if systemScreenLocked { return .ignore }
         return .reaffirm
@@ -157,41 +161,50 @@ do {
            "unlocked=\(unlocked) wedge=\(wedge)")
 }
 
-// ── 2. Cue machine: cancel then touch must re-present ───────────────────────
+// ── 2. Cue machine: click / Enter always re-presents after cancel ───────────
+//
+// Production InputTap no longer latches `hasCuedAuth` across attempts — every
+// intentional click/keyDown schedules a cue (coalesced per run-loop turn). The
+// controller is the only gate (`!isAuthenticating`, `!systemScreenLocked`).
 
 do {
     var isAuthenticating = false
-    var hasCuedAuth = false
+    var systemScreenLocked = false
     var presentations = 0
 
     func beginAuth() {
+        // Mirror LockController.beginAuth gates.
+        guard !systemScreenLocked else { return }
         guard !isAuthenticating else { return }
         isAuthenticating = true
         presentations += 1
     }
     func onCancel() {
         isAuthenticating = false
-        hasCuedAuth = false
     }
+    /// Per-turn coalesce only — next turn always cues again.
     func cue() {
-        guard !hasCuedAuth else { return }
-        hasCuedAuth = true
         beginAuth()
     }
 
     cue()
-    expect("first touch presents dialog", presentations == 1)
+    expect("first click/Enter presents dialog", presentations == 1)
+    // Second cue while dialog is up is a no-op (idempotent), not a latch bug.
+    cue()
+    expect("cue while dialog up is idempotent", presentations == 1, "got \(presentations)")
     onCancel()
     expect("after cancel isAuthenticating=false", !isAuthenticating)
-    expect("after cancel hasCuedAuth=false (rearmed)", !hasCuedAuth)
     cue()
-    expect("second touch re-presents dialog", presentations == 2, "got \(presentations)")
+    expect("click/Enter after cancel re-presents dialog", presentations == 2, "got \(presentations)")
+    onCancel()
+    cue()
+    expect("third click/Enter still re-presents (no sticky latch)", presentations == 3,
+           "got \(presentations)")
 }
 
-// Stuck isAuthenticating: session reaffirm must clear so next cue presents.
+// Stuck isAuthenticating: session reaffirm / reset must clear so next cue presents.
 do {
     var isAuthenticating = true
-    var hasCuedAuth = true
     var presentations = 0
 
     func beginAuth() {
@@ -202,7 +215,6 @@ do {
     func onSessionReaffirm(clearStuckAuth: Bool) {
         if clearStuckAuth {
             isAuthenticating = false
-            hasCuedAuth = false
         }
     }
 
@@ -215,7 +227,56 @@ do {
            "got \(presentations)")
 }
 
-// ── 3. POWER-BUTTON TRAP — the user's exact sequence ────────────────────────
+// Never cue Medusa auth over loginwindow (yield state).
+do {
+    var isAuthenticating = false
+    var systemScreenLocked = true
+    var presentations = 0
+
+    func beginAuth() {
+        guard !systemScreenLocked else { return }
+        guard !isAuthenticating else { return }
+        isAuthenticating = true
+        presentations += 1
+    }
+
+    beginAuth()
+    expect("no Medusa auth while systemScreenLocked (yielded)", presentations == 0)
+    systemScreenLocked = false
+    beginAuth()
+    expect("auth resumes after system unlock path clears flag", presentations == 1)
+}
+
+// Production source: cue is not a sticky latch, Enter is a keyDown cue.
+do {
+    let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let tapURL = here.appendingPathComponent("../Sources/Medusa/InputTap.swift")
+    let controllerURL = here.appendingPathComponent("../Sources/Medusa/LockController.swift")
+    let tap = (try? String(contentsOf: tapURL, encoding: .utf8)) ?? ""
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+    // Reject the old sticky field, not the historical mention in a comment.
+    let stickyLatch =
+        tap.contains("private var hasCuedAuth")
+        || tap.contains("var hasCuedAuth")
+        || tap.contains("hasCuedAuth = true")
+    expect(
+        "InputTap has no sticky hasCuedAuth latch",
+        !stickyLatch,
+        "sticky latch made second Enter a silent no-op"
+    )
+    expect(
+        "InputTap schedules cue on keyDown/click",
+        tap.contains("scheduleCue") && tap.contains("isCue"),
+        "click/Enter must reach onInteraction"
+    )
+    expect(
+        "beginAuth refuses while systemScreenLocked",
+        controller.contains("!systemScreenLocked") || controller.contains("systemScreenLocked else"),
+        "must not re-present Medusa auth over loginwindow"
+    )
+}
+
+// ── 3. POWER-BUTTON / LOGINWINDOW TRAP — the user's exact sequences ─────────
 
 do {
     let reaction = sessionReaction(
@@ -231,6 +292,19 @@ do {
 }
 
 do {
+    let lockReaction = sessionReaction(
+        event: .systemScreenDidLock,
+        isLocked: true,
+        systemScreenLocked: false
+    )
+    expect(
+        "systemScreenDidLock while locked → yield (not ignore)",
+        lockReaction == .yield,
+        "got \(lockReaction) — ignore leaves shield+tap over loginwindow password field"
+    )
+}
+
+do {
     let delivered = productionObserversDeliver(.systemScreenDidUnlock)
     expect(
         "production observes com.apple.screenIsUnlocked",
@@ -240,9 +314,21 @@ do {
 }
 
 do {
+    let delivered = productionObserversDeliver(.systemScreenDidLock)
+    expect(
+        "production observes com.apple.screenIsLocked",
+        delivered,
+        "without the lock observer we never yield to loginwindow"
+    )
+}
+
+do {
     // Full sequence under fixed policy + fixed observers.
     var locked = true
     var systemLocked = false
+    var shieldUp = true
+    var tapActive = true
+    var yielded = false
 
     func handle(_ event: SessionEvent) {
         guard productionObserversDeliver(event) else { return }
@@ -252,13 +338,35 @@ do {
         default: break
         }
         switch sessionReaction(event: event, isLocked: locked, systemScreenLocked: systemLocked) {
-        case .release: locked = false
-        case .reaffirm, .ignore: break
+        case .release:
+            locked = false
+            shieldUp = false
+            tapActive = false
+            yielded = false
+        case .yield:
+            // Stay notionally locked, but surrender display + input.
+            shieldUp = false
+            tapActive = false
+            yielded = true
+        case .reaffirm:
+            // Reaffirm while system-locked would re-trap — must not happen.
+            if !systemLocked {
+                shieldUp = true
+                tapActive = true
+                yielded = false
+            }
+        case .ignore:
+            break
         }
     }
 
     handle(.systemScreenDidLock)
-    expect("after system lock Medusa still locked (ignore)", locked)
+    expect("after system lock Medusa still locked (yield keeps isLocked)", locked)
+    expect("after system lock shield is down", !shieldUp,
+           "shield still up — blocks loginwindow")
+    expect("after system lock tap is stopped", !tapActive,
+           "tap still active — can steal password keystrokes")
+    expect("after system lock yielded flag set", yielded)
 
     // Wake while system lock is up must NOT reaffirm (would cover loginwindow).
     let wakeDuringSystemLock = sessionReaction(
@@ -266,6 +374,9 @@ do {
     )
     expect("didWake during system lock → ignore (don't cover loginwindow)",
            wakeDuringSystemLock == .ignore, "got \(wakeDuringSystemLock)")
+    handle(.didWake)
+    expect("wake during system lock does not re-raise shield", !shieldUp)
+    expect("wake during system lock does not restart tap", !tapActive)
 
     handle(.systemScreenDidUnlock)
     expect("after system unlock Medusa released", !locked,
@@ -284,6 +395,56 @@ do {
            sessionReaction(event: .screensDidWake, isLocked: true, systemScreenLocked: false) == .reaffirm)
     expect("didWake while unlocked → ignore",
            sessionReaction(event: .didWake, isLocked: false, systemScreenLocked: false) == .ignore)
+}
+
+// Production source must actually implement yield (policy + controller).
+do {
+    let controller = productionSource()
+    let policyURLCandidates = [
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("../Sources/Medusa/LockPolicy.swift"),
+        URL(fileURLWithPath: "Sources/Medusa/LockPolicy.swift")
+    ]
+    var policy = ""
+    for url in policyURLCandidates {
+        if let text = try? String(contentsOf: url, encoding: .utf8) {
+            policy = text
+            break
+        }
+    }
+    expect(
+        "LockPolicy SessionReaction includes yield",
+        policy.contains("case yield"),
+        "policy must distinguish yield from ignore"
+    )
+    expect(
+        "LockPolicy systemScreenDidLock returns yield",
+        policy.contains("return .yield"),
+        "system lock must map to yield"
+    )
+    expect(
+        "LockController implements yieldToSystemLock",
+        controller.contains("yieldToSystemLock"),
+        "controller must have an explicit yield path"
+    )
+    expect(
+        "yield stops the input tap",
+        controller.contains("tap.stop()"),
+        "leaving the tap alive over loginwindow is the password-field trap"
+    )
+    expect(
+        "yield hides the shield",
+        controller.contains("shield.hide()"),
+        "auth-level alone is not enough — hide completely"
+    )
+    // Guard against the old bug: handling system lock with only rearm/setAuthMode
+    // and no yield reaction.
+    expect(
+        "controller switches on .yield",
+        controller.contains("case .yield"),
+        "reaction table must handle yield"
+    )
 }
 
 // ── 4. Wedge / fail-open still works ────────────────────────────────────────
@@ -323,7 +484,7 @@ print("----------------")
 print("PASS \(passed.count)  FAIL \(failed.count)")
 
 if failed.isEmpty {
-    print("RESULT: GREEN — cancel re-arms; system unlock observed + releases; no trap.")
+    print("RESULT: GREEN — cancel re-arms; system lock yields; system unlock releases; no trap.")
     exit(0)
 } else {
     print("RESULT: RED — \(failed.count) case(s) violate the never-trap contract.")

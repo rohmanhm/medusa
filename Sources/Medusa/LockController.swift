@@ -35,6 +35,10 @@ final class LockController {
     /// doesn't spam the same alert every time the display cycles.
     private var keepAwakeWarned = false
 
+    /// Latched for the current lock session: auto-locks from system-lock preempt
+    /// force the power assertion even when the Keep Awake toggle is off.
+    private var forceKeepAwakeThisLock = false
+
     /// Latched from `com.apple.screenIsLocked` / `…Unlocked`. While true, wake
     /// reaffirm is suppressed so we never cover loginwindow — and a subsequent
     /// system unlock releases Medusa entirely (the power-button trap fix).
@@ -66,7 +70,10 @@ final class LockController {
         isLocked ? requestUnlock() : lock()
     }
 
-    func lock() {
+    /// Engage the shield. `forceKeepAwake` is set by system-lock preempt so
+    /// forgetful auto-locks always hold the power assertion; manual paths leave
+    /// it false and honor the Keep Awake toggle.
+    func lock(forceKeepAwake: Bool = false) {
         guard !isLocked, Permissions.allGranted else {
             if !Permissions.allGranted { onLockFailed?() }
             return
@@ -86,8 +93,12 @@ final class LockController {
 
         wedgeCount = 0
         keepAwakeWarned = false
+        forceKeepAwakeThisLock = forceKeepAwake
         systemScreenLocked = false
-        if AppSettings.keepAwake {
+        if LockPolicy.shouldHoldKeepAwake(
+            forceKeepAwake: forceKeepAwakeThisLock,
+            keepAwakeSetting: AppSettings.keepAwake
+        ) {
             reportKeepAwakeFailureIfNeeded(held: power.begin())
         }
 
@@ -120,7 +131,16 @@ final class LockController {
     }
 
     private func beginAuth() {
-        guard isLocked, !auth.isAuthenticating else { return }
+        // Never fight loginwindow — if macOS owns the lock screen we yielded
+        // (shield down, tap stopped). A stale cue must not re-present Medusa auth.
+        guard isLocked, !systemScreenLocked else {
+            tap.rearm()
+            return
+        }
+
+        // Dialog already up — leave it alone. The next click/Enter after it
+        // dismisses will cue again (InputTap no longer latches across attempts).
+        guard !auth.isAuthenticating else { return }
 
         shield.setAuthMode(true)
         // Re-front on EVERY attempt, not just the first lock. An accessory
@@ -131,6 +151,11 @@ final class LockController {
 
         auth.authenticate(reason: "unlock your Mac") { [weak self] outcome in
             guard let self, self.isLocked else { return }
+            // System lock may have taken over mid-evaluate — don't re-raise our UI.
+            if self.systemScreenLocked {
+                self.tap.rearm()
+                return
+            }
             let (reaction, nextWedge) = Self.reaction(for: outcome, priorWedge: self.wedgeCount)
             self.wedgeCount = nextWedge
             switch reaction {
@@ -139,7 +164,7 @@ final class LockController {
 
             case .rearmAndStayLocked:
                 // Normal: the user backed out or a fingerprint missed. Stay
-                // locked and let the next touch summon the dialog again.
+                // locked and let the next click / Enter summon the dialog again.
                 self.shield.setAuthMode(false)
                 self.tap.rearm()
 
@@ -185,6 +210,7 @@ final class LockController {
         power.end()
         wedgeCount = 0
         keepAwakeWarned = false
+        forceKeepAwakeThisLock = false
         systemScreenLocked = false
         isLocked = false
         onStateChange?()
@@ -258,11 +284,6 @@ final class LockController {
         switch event {
         case .systemScreenDidLock:
             systemScreenLocked = true
-            // The system dialog replaced ours; any in-flight LA evaluation is
-            // unreachable. Clear it so a later Medusa cue isn't a silent no-op.
-            auth.reset()
-            shield.setAuthMode(false)
-            tap.rearm()
         case .systemScreenDidUnlock:
             systemScreenLocked = false
         case .didWake, .screensDidWake, .sessionDidBecomeActive:
@@ -279,16 +300,40 @@ final class LockController {
             unlock()
         case .reaffirm:
             reaffirmLock()
+        case .yield:
+            yieldToSystemLock()
         case .ignore:
             break
         }
     }
 
+    /// macOS's lock screen is up. Get completely out of its way — hide every
+    /// shield and tear down the key-swallowing tap — while remaining notionally
+    /// locked so `systemScreenDidUnlock` still releases us (never-trap).
+    ///
+    /// The previous "ignore" path only skipped reaffirm; the shield stayed at
+    /// `CGShieldingWindowLevel` and the tap kept eating keystrokes, so the
+    /// loginwindow password field was unreachable and force-shutdown was the
+    /// only exit. That must never happen again.
+    private func yieldToSystemLock() {
+        guard isLocked else { return }
+        auth.reset()
+        // Stop, don't just rearm: a live session tap can still interfere with
+        // loginwindow input even when Secure Event Input is supposed to bypass it.
+        tap.stop()
+        // Hide, don't drop to auth level: auth level is still above the desktop
+        // and can race loginwindow. Gone is the only safe z-order.
+        shield.hide()
+        // Keep the power assertion and backstop — we are still "locked" for
+        // session purposes; system unlock will run the full unlock() path.
+    }
+
     /// Re-hold the keep-awake assertion, re-enable the tap, clear any stuck auth
     /// flag, and re-front the shields. Safe to call spuriously — every step is
-    /// idempotent while locked.
+    /// idempotent while locked. Must never run while the system lock screen owns
+    /// the display (policy returns `.ignore` in that case).
     private func reaffirmLock() {
-        guard isLocked else { return }
+        guard isLocked, !systemScreenLocked else { return }
         // Sleep mid-dialog can leave isAuthenticating latched if the LA
         // completion was lost or delayed. Reset so the next touch re-presents
         // instead of dying in `guard !isAuthenticating`.
@@ -297,11 +342,32 @@ final class LockController {
             shield.setAuthMode(false)
             tap.rearm()
         }
-        if AppSettings.keepAwake {
+        if LockPolicy.shouldHoldKeepAwake(
+            forceKeepAwake: forceKeepAwakeThisLock,
+            keepAwakeSetting: AppSettings.keepAwake
+        ) {
             reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
         }
-        tap.ensureEnabled()
-        shield.reaffirm()
+        // After a yield the tap is fully stopped and shields are gone. A normal
+        // reaffirm (display sleep without system lock) only needs ensureEnabled /
+        // orderFront; if we somehow reaffirm with nothing installed, re-arm from
+        // scratch so the lock is real again rather than a hollow isLocked flag.
+        if !tap.isActive {
+            tap.onInteraction = { [weak self] in self?.beginAuth() }
+            if !tap.start() {
+                // Can't block input — fail open rather than pretend.
+                unlock()
+                onLockFailed?()
+                return
+            }
+        } else {
+            tap.ensureEnabled()
+        }
+        if !shield.isShown {
+            shield.show()
+        } else {
+            shield.reaffirm()
+        }
     }
 
     private func reportKeepAwakeFailureIfNeeded(held: Bool) {
