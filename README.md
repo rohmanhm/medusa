@@ -38,6 +38,17 @@ login password.
   hot-plug and resolution changes.
 - **Stays awake** — an IOKit power assertion keeps the display on and prevents
   idle sleep so your tasks don't pause (toggleable).
+- **Keep Awake sessions** — a first-class peer of the Lock: start a Session
+  from the menu (or right-click for Quick start, or a second hotkey) —
+  indefinitely, for a duration, or until a clock time — at Display awake
+  (screen stays on) or System awake (screen may sleep, work continues).
+  Editable presets, Extend without restarting, an optional menu-bar countdown,
+  end-of-session notifications, and a Battery guard that ends Sessions before
+  a laptop dies on battery. The Lock's keep-awake is one Hold on the same
+  engine, so locking mid-Session composes instead of colliding. All of it is
+  customizable in Settings → Keep Awake. (No lid-closed mode and no
+  while-process-runs End condition yet — idle assertions can't prevent forced
+  sleep, and process detection is the next effort.)
 - **OLED-friendly** — the lock display wanders to a new spot every couple of
   minutes (or drifts gently, your pick) and dims to half brightness after a few
   idle minutes, so hours under the shield never park static pixels on your
@@ -65,7 +76,7 @@ the biometric unlock; password unlock works on any Mac.
 
 ### Option 1 — download the app (Apple Silicon)
 
-**[⬇ Download Medusa-0.2.4.dmg](https://github.com/rohmanhm/medusa/releases/download/v0.2.4/Medusa-0.2.4.dmg)**
+**[⬇ Download Medusa-0.3.0.dmg](https://github.com/rohmanhm/medusa/releases/download/v0.3.0/Medusa-0.3.0.dmg)**
 — or grab the newest build from the [releases page](https://github.com/rohmanhm/medusa/releases/latest).
 
 Open the DMG and drag **Medusa** into **Applications**, then launch it.

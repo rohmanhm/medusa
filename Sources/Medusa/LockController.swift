@@ -44,6 +44,12 @@ final class LockController {
     /// system unlock releases Medusa entirely (the power-button trap fix).
     private var systemScreenLocked = false
 
+    /// When wired (the running app), the Lock places a Lock hold on the shared
+    /// Keep Awake engine instead of owning the power assertion itself — one
+    /// engine, many Holds. Nil in headless harnesses, which keep the legacy
+    /// direct assertion path byte-for-byte.
+    var keepAwakeEngine: KeepAwakeController?
+
     private(set) var isLocked = false
 
     /// Notifies observers (the menu bar) that lock state changed.
@@ -99,7 +105,11 @@ final class LockController {
             forceKeepAwake: forceKeepAwakeThisLock,
             keepAwakeSetting: AppSettings.keepAwake
         ) {
-            reportKeepAwakeFailureIfNeeded(held: power.begin())
+            if let engine = keepAwakeEngine {
+                reportKeepAwakeFailureIfNeeded(held: engine.setLockHold(true))
+            } else {
+                reportKeepAwakeFailureIfNeeded(held: power.begin())
+            }
         }
 
         isLocked = true
@@ -207,6 +217,7 @@ final class LockController {
         auth.reset()
         tap.stop()
         shield.hide()
+        keepAwakeEngine?.setLockHold(false)
         power.end()
         wedgeCount = 0
         keepAwakeWarned = false
@@ -346,7 +357,11 @@ final class LockController {
             forceKeepAwake: forceKeepAwakeThisLock,
             keepAwakeSetting: AppSettings.keepAwake
         ) {
-            reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
+            if let engine = keepAwakeEngine {
+                reportKeepAwakeFailureIfNeeded(held: engine.reaffirmLockHold())
+            } else {
+                reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
+            }
         }
         // After a yield the tap is fully stopped and shields are gone. A normal
         // reaffirm (display sleep without system lock) only needs ensureEnabled /

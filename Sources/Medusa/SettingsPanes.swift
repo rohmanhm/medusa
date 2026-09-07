@@ -191,7 +191,6 @@ struct LockScreenPane: View {
     @AppStorage(AppSettings.Keys.showDate) private var showDate = true
     @AppStorage(AppSettings.Keys.showHint) private var showHint = true
     @AppStorage(AppSettings.Keys.lockMessage) private var lockMessage = ""
-    @AppStorage(AppSettings.Keys.keepAwake) private var keepAwake = true
     @AppStorage(AppSettings.Keys.shieldMotionStyle) private var motionStyle = ShieldMotionStyle.wander.rawValue
     @AppStorage(AppSettings.Keys.shieldDimMinutes) private var dimMinutes = 5
 
@@ -260,14 +259,6 @@ struct LockScreenPane: View {
                     + "smoothly across the whole screen from the moment you lock; "
                     + "dimming fades it once you've stepped away. On lock, a brief "
                     + "note confirms what's on. Changes apply from the next lock.")
-            }
-
-            Section {
-                Toggle("Keep Mac awake while locked", isOn: $keepAwake)
-            } footer: {
-                Text("Holds a power assertion so long builds, renders, and agents keep "
-                    + "running under the shield. Turn off to let the display sleep on "
-                    + "its normal schedule.")
             }
         }
         .formStyle(.grouped)
@@ -428,6 +419,119 @@ private struct LockScreenPreview: View {
         formatter.dateFormat = "EEEE, MMMM d"
         return formatter
     }()
+}
+
+// MARK: - Keep Awake
+
+struct KeepAwakePane: View {
+    @AppStorage(AppSettings.Keys.keepAwake) private var keepAwakeWhileLocked = true
+    @AppStorage(AppSettings.Keys.keepAwakePresets) private var presetsRaw = "15,30,60,120,240,480,720"
+    @AppStorage(AppSettings.Keys.keepAwakeDefaultMinutes) private var defaultMinutes = AppSettings.keepAwakeIndefiniteMinutes
+    @AppStorage(AppSettings.Keys.keepAwakeDefaultLevel) private var defaultLevel = AwakeLevel.display.rawValue
+    @AppStorage(AppSettings.Keys.keepAwakeGuardEnabled) private var guardEnabled = true
+    @AppStorage(AppSettings.Keys.keepAwakeGuardThreshold) private var guardThreshold = 10
+    @AppStorage(AppSettings.Keys.keepAwakeEndedNotify) private var endedNotify = true
+    @AppStorage(AppSettings.Keys.keepAwakeSoonNotify) private var soonNotify = false
+    @AppStorage(AppSettings.Keys.keepAwakeSoonMinutes) private var soonMinutes = 5
+    @AppStorage(AppSettings.Keys.keepAwakeShowCountdown) private var showCountdown = false
+    @AppStorage(AppSettings.Keys.keepAwakeStartAtLaunch) private var startAtLaunch = false
+
+    private static let durationChoices: [(minutes: Int, label: String)] = [
+        (-1, "Indefinitely"),
+        (15, "15 minutes"),
+        (30, "30 minutes"),
+        (60, "1 hour"),
+        (120, "2 hours"),
+        (240, "4 hours"),
+        (480, "8 hours"),
+        (720, "12 hours")
+    ]
+
+    private static let levelChoices: [(level: AwakeLevel, label: String)] = [
+        (.display, "Display awake (screen stays on)"),
+        (.system, "System awake (screen may sleep)")
+    ]
+
+    private static let thresholdChoices = [5, 10, 15, 20]
+    private static let soonChoices = [1, 2, 5, 10, 15]
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Keep Mac awake while locked", isOn: $keepAwakeWhileLocked)
+            } footer: {
+                Text("The Lock's own Hold on the shared engine — so long builds, renders, "
+                    + "and agents keep running under the shield. Turn off to let the display "
+                    + "sleep on its normal schedule.")
+            }
+
+            Section {
+                TextField("Presets (minutes)", text: $presetsRaw, prompt: Text("15,30,60,120,240,480,720"))
+                Picker("Default duration", selection: $defaultMinutes) {
+                    ForEach(Self.durationChoices, id: \.minutes) { choice in
+                        Text(choice.label).tag(choice.minutes)
+                    }
+                }
+                Picker("Default level", selection: $defaultLevel) {
+                    ForEach(Self.levelChoices, id: \.level.rawValue) { choice in
+                        Text(choice.label).tag(choice.level.rawValue)
+                    }
+                }
+                Toggle("Start Keep Awake when Medusa starts", isOn: $startAtLaunch)
+            } header: {
+                Text("Sessions")
+            } footer: {
+                Text("Presets are a comma-separated minute list. The default duration drives "
+                    + "Quick start (right-click the menu icon), the hotkey, and start-at-launch. "
+                    + "Indefinitely is the default.")
+            }
+
+            Section {
+                Toggle("End Sessions when the battery runs low", isOn: $guardEnabled)
+                Picker("Below", selection: $guardThreshold) {
+                    ForEach(Self.thresholdChoices, id: \.self) { threshold in
+                        Text("\(threshold)%").tag(threshold)
+                    }
+                }
+                .disabled(!guardEnabled)
+            } header: {
+                Text("Battery Guard")
+            } footer: {
+                Text("On battery, Sessions end at the threshold or when macOS reports its Final "
+                    + "warning — whichever lands first. A dead laptop is worse than a sleeping one. "
+                    + "Never fires on AC. Covers Sessions only, not the Lock hold.")
+            }
+
+            Section {
+                Toggle("Notify when a Session ends", isOn: $endedNotify)
+                Toggle("Nudge before a Session ends", isOn: $soonNotify)
+                Picker("Nudge lead time", selection: $soonMinutes) {
+                    ForEach(Self.soonChoices, id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+                .disabled(!soonNotify)
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("Ended notifications fire only for Sessions you didn't stop by hand. "
+                    + "The nudge carries an Extend action; the menu always offers Extend too. "
+                    + "Permission is asked at the first Session start, never before.")
+            }
+
+            Section {
+                LabeledContent("Toggle a Session") { ShortcutRecorder(keys: .keepAwake) }
+                Toggle("Show countdown in the menu bar", isOn: $showCountdown)
+            } header: {
+                Text("Menu Bar & Shortcut")
+            } footer: {
+                Text("The shortcut ships unassigned and is ignored while locked. Countdown "
+                    + "renders 1:23 beside the icon and ticks on minute boundaries.")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
 }
 
 // MARK: - Permissions

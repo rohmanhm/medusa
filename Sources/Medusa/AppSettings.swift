@@ -30,6 +30,25 @@ enum AppSettings {
         static let systemLockPreemptIdleMinutes = "systemLockPreemptIdleMinutes"
         /// One-shot race-loss warning latch; reset when the setting is re-enabled.
         static let systemLockPreemptWarned = "systemLockPreemptWarned"
+        // MARK: Keep Awake
+        /// Comma-separated preset durations in minutes (editable in Settings).
+        static let keepAwakePresets = "keepAwakePresets"
+        /// Default duration in minutes for Quick start / hotkey / start-at-launch.
+        /// -1 means Indefinitely.
+        static let keepAwakeDefaultMinutes = "keepAwakeDefaultMinutes"
+        /// Default Awake level for new Sessions ("display" / "system").
+        static let keepAwakeDefaultLevel = "keepAwakeDefaultLevel"
+        static let keepAwakeGuardEnabled = "keepAwakeGuardEnabled"
+        static let keepAwakeGuardThreshold = "keepAwakeGuardThreshold"
+        static let keepAwakeEndedNotify = "keepAwakeEndedNotify"
+        static let keepAwakeSoonNotify = "keepAwakeSoonNotify"
+        static let keepAwakeSoonMinutes = "keepAwakeSoonMinutes"
+        static let keepAwakeHotKeyKeyCode = "keepAwakeHotKeyKeyCode"
+        static let keepAwakeHotKeyModifiers = "keepAwakeHotKeyModifiers"
+        static let keepAwakeHotKeyKeyChar = "keepAwakeHotKeyKeyChar"
+        static let keepAwakeHotKeyDisplay = "keepAwakeHotKeyDisplay"
+        static let keepAwakeShowCountdown = "keepAwakeShowCountdown"
+        static let keepAwakeStartAtLaunch = "keepAwakeStartAtLaunch"
     }
 
     /// Default shortcut: ⌘⇧L (keyCode 37 == "L" on the ANSI layout).
@@ -58,7 +77,21 @@ enum AppSettings {
             Keys.shieldDimMinutes: 5,
             Keys.systemLockPreemptEnabled: false,
             Keys.systemLockPreemptIdleMinutes: 5,
-            Keys.systemLockPreemptWarned: false
+            Keys.systemLockPreemptWarned: false,
+            Keys.keepAwakePresets: "15,30,60,120,240,480,720",
+            Keys.keepAwakeDefaultMinutes: -1,
+            Keys.keepAwakeDefaultLevel: AwakeLevel.display.rawValue,
+            Keys.keepAwakeGuardEnabled: true,
+            Keys.keepAwakeGuardThreshold: 10,
+            Keys.keepAwakeEndedNotify: true,
+            Keys.keepAwakeSoonNotify: false,
+            Keys.keepAwakeSoonMinutes: 5,
+            Keys.keepAwakeHotKeyKeyCode: 0,
+            Keys.keepAwakeHotKeyModifiers: 0,
+            Keys.keepAwakeHotKeyKeyChar: "",
+            Keys.keepAwakeHotKeyDisplay: "None",
+            Keys.keepAwakeShowCountdown: false,
+            Keys.keepAwakeStartAtLaunch: false
         ])
     }
 
@@ -121,6 +154,51 @@ enum AppSettings {
     static var systemLockPreemptWarned: Bool {
         get { defaults.bool(forKey: Keys.systemLockPreemptWarned) }
         set { defaults.set(newValue, forKey: Keys.systemLockPreemptWarned) }
+    }
+
+    // MARK: Keep Awake
+
+    /// Indefinite marker for `keepAwakeDefaultMinutes`.
+    static let keepAwakeIndefiniteMinutes = -1
+
+    /// Editable preset durations (minutes), parsed from a comma-separated
+    /// string so `@AppStorage` can bind it directly.
+    static var keepAwakePresetMinutes: [Int] {
+        let raw = defaults.string(forKey: Keys.keepAwakePresets) ?? ""
+        let parsed = raw.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 > 0 }
+        return parsed.isEmpty ? [15, 30, 60, 120, 240, 480, 720] : Array(parsed.prefix(12))
+    }
+
+    /// The End condition used by Quick start, the hotkey, and start-at-launch.
+    static var keepAwakeDefaultEnd: KeepAwakeEndCondition {
+        let minutes = defaults.integer(forKey: Keys.keepAwakeDefaultMinutes)
+        if minutes == keepAwakeIndefiniteMinutes { return .indefinitely }
+        return .duration(TimeInterval(max(1, minutes) * 60))
+    }
+
+    static var keepAwakeDefaultMinutes: Int { defaults.integer(forKey: Keys.keepAwakeDefaultMinutes) }
+
+    static var keepAwakeDefaultLevel: AwakeLevel {
+        AwakeLevel(rawValue: defaults.string(forKey: Keys.keepAwakeDefaultLevel) ?? "") ?? .display
+    }
+
+    static var keepAwakeGuardEnabled: Bool { defaults.bool(forKey: Keys.keepAwakeGuardEnabled) }
+    static var keepAwakeGuardThreshold: Int { defaults.integer(forKey: Keys.keepAwakeGuardThreshold) }
+    static var keepAwakeEndedNotify: Bool { defaults.bool(forKey: Keys.keepAwakeEndedNotify) }
+    static var keepAwakeSoonNotify: Bool { defaults.bool(forKey: Keys.keepAwakeSoonNotify) }
+    static var keepAwakeSoonMinutes: Int { defaults.integer(forKey: Keys.keepAwakeSoonMinutes) }
+    static var keepAwakeShowCountdown: Bool { defaults.bool(forKey: Keys.keepAwakeShowCountdown) }
+    static var keepAwakeStartAtLaunch: Bool { defaults.bool(forKey: Keys.keepAwakeStartAtLaunch) }
+
+    static var keepAwakeHotKeyKeyCode: UInt16 { UInt16(clamping: defaults.integer(forKey: Keys.keepAwakeHotKeyKeyCode)) }
+
+    static var keepAwakeHotKeyModifiers: NSEvent.ModifierFlags {
+        NSEvent.ModifierFlags(rawValue: UInt(bitPattern: defaults.integer(forKey: Keys.keepAwakeHotKeyModifiers)))
+    }
+
+    static var keepAwakeHotKeyAssigned: Bool {
+        defaults.integer(forKey: Keys.keepAwakeHotKeyKeyCode) != 0
+            && defaults.integer(forKey: Keys.keepAwakeHotKeyModifiers) != 0
     }
 }
 

@@ -4,17 +4,59 @@ import AppKit
 /// A compact "click, then type" shortcut recorder.
 ///
 /// While recording, a local event monitor swallows the next key press and
-/// stores it as the global lock shortcut. Escape cancels; a shortcut must
-/// include ⌘, ⌃, or ⌥ so plain typing can never trigger a lock.
+/// stores it as a global shortcut. Escape cancels; a shortcut must include
+/// ⌘, ⌃, or ⌥ so plain typing can never trigger an action.
 struct ShortcutRecorder: View {
-    @AppStorage(AppSettings.Keys.hotKeyDisplay) private var display = AppSettings.defaultHotKeyDisplay
+    /// Which chord this recorder edits. The lock chord ships as ⌘⇧L; the
+    /// keep-awake chord ships unassigned (this audience's app chords are
+    /// sacred) — resetting it clears back to None.
+    struct KeySet {
+        let codeKey: String
+        let modifiersKey: String
+        let charKey: String
+        let displayKey: String
+        let defaultCode: Int
+        let defaultModifiers: Int
+        let defaultChar: String
+        let defaultDisplay: String
+
+        static let lock = KeySet(
+            codeKey: AppSettings.Keys.hotKeyKeyCode,
+            modifiersKey: AppSettings.Keys.hotKeyModifiers,
+            charKey: AppSettings.Keys.hotKeyKeyChar,
+            displayKey: AppSettings.Keys.hotKeyDisplay,
+            defaultCode: AppSettings.defaultHotKeyKeyCode,
+            defaultModifiers: AppSettings.defaultHotKeyModifiers,
+            defaultChar: AppSettings.defaultHotKeyKeyChar,
+            defaultDisplay: AppSettings.defaultHotKeyDisplay
+        )
+
+        static let keepAwake = KeySet(
+            codeKey: AppSettings.Keys.keepAwakeHotKeyKeyCode,
+            modifiersKey: AppSettings.Keys.keepAwakeHotKeyModifiers,
+            charKey: AppSettings.Keys.keepAwakeHotKeyKeyChar,
+            displayKey: AppSettings.Keys.keepAwakeHotKeyDisplay,
+            defaultCode: 0,
+            defaultModifiers: 0,
+            defaultChar: "",
+            defaultDisplay: "None"
+        )
+    }
+
+    let keys: KeySet
+
+    init(keys: KeySet = .lock) {
+        self.keys = keys
+    }
+
+    @State private var display = ""
 
     @State private var isRecording = false
     @State private var monitor: Any?
 
     private var isDefault: Bool {
-        UserDefaults.standard.integer(forKey: AppSettings.Keys.hotKeyKeyCode) == AppSettings.defaultHotKeyKeyCode
-            && UserDefaults.standard.integer(forKey: AppSettings.Keys.hotKeyModifiers) == AppSettings.defaultHotKeyModifiers
+        UserDefaults.standard.integer(forKey: keys.codeKey) == keys.defaultCode
+            && UserDefaults.standard.integer(forKey: keys.modifiersKey) == keys.defaultModifiers
     }
 
     var body: some View {
@@ -22,16 +64,16 @@ struct ShortcutRecorder: View {
             if !isDefault && !isRecording {
                 Button {
                     save(
-                        keyCode: AppSettings.defaultHotKeyKeyCode,
-                        modifiers: AppSettings.defaultHotKeyModifiers,
-                        keyChar: AppSettings.defaultHotKeyKeyChar,
-                        display: AppSettings.defaultHotKeyDisplay
+                        keyCode: keys.defaultCode,
+                        modifiers: keys.defaultModifiers,
+                        keyChar: keys.defaultChar,
+                        display: keys.defaultDisplay
                     )
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
                 .buttonStyle(.borderless)
-                .help("Reset to \(AppSettings.defaultHotKeyDisplay)")
+                .help("Reset to \(keys.defaultDisplay)")
             }
 
             Button(action: toggleRecording) {
@@ -40,6 +82,10 @@ struct ShortcutRecorder: View {
                     .foregroundStyle(isRecording ? Color.secondary : Color.primary)
                     .frame(minWidth: 76)
             }
+        }
+        .onAppear {
+            let saved = UserDefaults.standard.string(forKey: keys.displayKey)
+            display = (saved?.isEmpty ?? true) ? keys.defaultDisplay : (saved ?? keys.defaultDisplay)
         }
         .onDisappear(perform: stopRecording)
     }
@@ -93,10 +139,10 @@ struct ShortcutRecorder: View {
 
     private func save(keyCode: Int, modifiers: Int, keyChar: String, display: String) {
         let defaults = UserDefaults.standard
-        defaults.set(keyCode, forKey: AppSettings.Keys.hotKeyKeyCode)
-        defaults.set(modifiers, forKey: AppSettings.Keys.hotKeyModifiers)
-        defaults.set(keyChar, forKey: AppSettings.Keys.hotKeyKeyChar)
-        defaults.set(display, forKey: AppSettings.Keys.hotKeyDisplay)
+        defaults.set(keyCode, forKey: keys.codeKey)
+        defaults.set(modifiers, forKey: keys.modifiersKey)
+        defaults.set(keyChar, forKey: keys.charKey)
+        defaults.set(display, forKey: keys.displayKey)
         self.display = display
     }
 

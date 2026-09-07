@@ -9,12 +9,14 @@ final class SettingsWindowController: NSWindowController {
     enum Tab: Int, CaseIterable {
         case general
         case lockScreen
+        case keepAwake
         case permissions
 
         var label: String {
             switch self {
             case .general: return "General"
             case .lockScreen: return "Lock Screen"
+            case .keepAwake: return "Keep Awake"
             case .permissions: return "Permissions"
             }
         }
@@ -23,6 +25,7 @@ final class SettingsWindowController: NSWindowController {
             switch self {
             case .general: return "gearshape"
             case .lockScreen: return "lock.display"
+            case .keepAwake: return "cup.and.saucer"
             case .permissions: return "checkmark.shield"
             }
         }
@@ -37,6 +40,7 @@ final class SettingsWindowController: NSWindowController {
             // Tall enough for Startup → Updates without clipping under the toolbar.
             case .general: return NSSize(width: 590, height: 720)
             case .lockScreen: return NSSize(width: 590, height: 780)
+            case .keepAwake: return NSSize(width: 590, height: 760)
             case .permissions: return NSSize(width: 590, height: 370)
             }
         }
@@ -45,6 +49,7 @@ final class SettingsWindowController: NSWindowController {
             switch self {
             case .general: GeneralPane(updater: updater)
             case .lockScreen: LockScreenPane()
+            case .keepAwake: KeepAwakePane()
             case .permissions: PermissionsPane()
             }
         }

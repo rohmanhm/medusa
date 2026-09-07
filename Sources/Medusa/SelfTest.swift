@@ -19,10 +19,15 @@ import AppKit
 ///   force-releases after N seconds (default 25) no matter what. This is the
 ///   one path `--lock-test` never touches: the auth cancel/retry that used to
 ///   trap the machine. It cannot trap you, because the backstop always wins.
+///
+/// - `--keepawake-test [seconds]`: exercises the Keep Awake engine headlessly
+///   (Display hold, System hold, release) with no permissions and no
+///   notifications. Exit 0 = PASS.
 enum SelfTestMode {
     case selfTest
     case lockTest(seconds: TimeInterval)
     case authTest(seconds: TimeInterval)
+    case keepAwakeTest(seconds: TimeInterval)
     case verify(timeout: TimeInterval)
 
     static func from(_ arguments: [String]) -> SelfTestMode? {
@@ -39,6 +44,10 @@ enum SelfTestMode {
         if let index = arguments.firstIndex(of: "--auth-test") {
             let seconds = arguments[safe: index + 1].flatMap(TimeInterval.init) ?? 25
             return .authTest(seconds: seconds)
+        }
+        if let index = arguments.firstIndex(of: "--keepawake-test") {
+            let seconds = arguments[safe: index + 1].flatMap(TimeInterval.init) ?? 8
+            return .keepAwakeTest(seconds: seconds)
         }
         return nil
     }
@@ -67,6 +76,7 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
         case .selfTest: runSelfTest()
         case .lockTest(let seconds): runLockTest(seconds: seconds)
         case .authTest(let seconds): runAuthTest(seconds: seconds)
+        case .keepAwakeTest(let seconds): runKeepAwakeTest(seconds: seconds)
         case .verify(let timeout): runVerify(timeout: timeout)
         }
     }
@@ -143,6 +153,20 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
         power.begin()
         log("Power assertion (keep-awake): \(mark(power.held))")
 
+        // Both Awake levels must hold and release through the same wrapper
+        // the engine uses — the level, not just the flag, is asserted.
+        power.end()
+        let displayHeld = power.begin(level: .display)
+        let displayLevel = power.level == .display
+        power.end()
+        let systemHeld = power.begin(level: .system)
+        let systemLevel = power.level == .system
+        let released = { power.end(); return !power.held }()
+        log("Power assertion Display awake: \(mark(displayHeld && displayLevel))")
+        log("Power assertion System awake:  \(mark(systemHeld && systemLevel))")
+        log("Power assertion release:       \(mark(released))")
+        let levelsOk = displayHeld && displayLevel && systemHeld && systemLevel && released
+
         shield.show()
         let screens = NSScreen.screens.count
         log("Shield overlay: shown on \(screens) display\(screens == 1 ? "" : "s")")
@@ -158,7 +182,7 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
             log("Teardown: overlay hidden, assertion released, tap stopped")
             log("----------------")
 
-            if tapCreated && accessibility && inputMonitoring {
+            if tapCreated && accessibility && inputMonitoring && levelsOk {
                 log("RESULT: PASS — core lock mechanics verified end-to-end.")
                 log("Only the human unlock (Touch ID / password) remains to test:")
                 log("press ⌘⇧L in the running app, or run: --lock-test")
@@ -231,6 +255,37 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
         authTestController = controller
         controller.lock()
         log("LOCKED — touch the keyboard or click to raise the unlock dialog.")
+    }
+
+    /// Exercises the Keep Awake engine headlessly: a real Display-awake Session
+    /// for N seconds (proves the assertion path the menu uses), then a System
+    /// hold, then release. Auto-exits; notification-free by the bundle-id
+    /// guard (unbundled here by construction).
+    private func runKeepAwakeTest(seconds: TimeInterval) {
+        let engine = KeepAwakeController()
+        log("Medusa keepawake-test: Display awake for \(Int(seconds))s, then System, then release.")
+        engine.startSession(end: .duration(seconds), level: .display)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
+            let displayOk = engine.effectiveLevel == .display
+            self.log("Display hold: \(self.mark(displayOk)) (header: \(engine.headerText() ?? "-"))")
+            engine.stopSession()
+            engine.startSession(end: .duration(seconds), level: .system)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
+                let systemOk = engine.effectiveLevel == .system
+                self.log("System hold:  \(self.mark(systemOk))")
+                engine.stopSession()
+                let released = engine.effectiveLevel == nil
+                self.log("Release:      \(self.mark(released))")
+                self.log("----------------")
+                if displayOk && systemOk && released {
+                    self.log("RESULT: PASS — Keep Awake engine holds/releases both levels.")
+                    exit(0)
+                } else {
+                    self.log("RESULT: FAIL — engine did not reach a level.")
+                    exit(3)
+                }
+            }
+        }
     }
 
     private func mark(_ ok: Bool) -> String { ok ? "✅ yes" : "❌ no" }
