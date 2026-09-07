@@ -60,7 +60,7 @@ One seam: a pure decision surface (KeepAwakePolicy) covering start / extend / st
 
 - A single owner (KeepAwakeController) holds the OS assertion while any Hold is live. Holds are user Sessions plus the Lock hold. Rejected: per-feature assertions (two sources of truth) and "lock adopts the session horizon" (silently ending a promise made via the lock toggle). Recorded as ADR-0001.
 - The Lock stops owning the power assertion and instead places/withdraws a Lock hold on lock/unlock (including yield on system lock and release on system unlock). Lock-only behavior is preserved byte-for-byte: the Keep Awake toggle, preempt's forced hold for auto-locks, the once-per-lock keep-awake-failed alert, and reaffirm-on-wake.
-- Sessions start only while unlocked (menu unreachable under the shield; the keep-awake hotkey is ignored while locked). Locking during a Session adds the Lock hold; unlocking removes only it. A Session ending under Lock is a no-op while the Lock hold stands. Preempt idle auto-lock is not paused by a Session.
+- Sessions start only while unlocked (menu unreachable under the shield; the keep-awake hotkey is ignored while locked). Locking during a Session adds the Lock hold; unlocking removes only it. A Session ending under Lock is a no-op while the Lock hold stands. Preempt **idle** auto-lock **is paused** by a live Session — reversed 2026-09-07 after a field report (starting a Session then sitting idle hands-off auto-locked the user behind the shield, which reads as broken: idle ≠ away and the explicit promise wins); the ⌃⌘Q chord still preempts, and idle protection resumes the moment the Session ends.
 - No persistence: a Session dies with the process; quit ends every Hold with no dialog.
 
 ### Awake levels

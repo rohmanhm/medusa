@@ -150,13 +150,18 @@ enum LockPolicy {
     }
 
     /// Idle crossed the threshold while the setting is on and Medusa is free.
+    /// A live Keep Awake Session pauses this path: the user made an explicit
+    /// keep-awake promise (often hands-off watching) and idle ≠ away, so
+    /// locking on top of it reads as broken. The ⌃⌘Q chord stays live, and
+    /// protection resumes the moment the Session ends.
     static func idlePreempt(
         enabled: Bool,
         isLocked: Bool,
         idleSeconds: TimeInterval,
-        thresholdSeconds: TimeInterval
+        thresholdSeconds: TimeInterval,
+        sessionActive: Bool = false
     ) -> PreemptAction {
-        guard enabled, !isLocked, thresholdSeconds > 0, idleSeconds >= thresholdSeconds else {
+        guard enabled, !isLocked, !sessionActive, thresholdSeconds > 0, idleSeconds >= thresholdSeconds else {
             return .none
         }
         return .autoLock

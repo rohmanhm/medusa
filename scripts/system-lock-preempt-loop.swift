@@ -34,9 +34,14 @@ func idlePreempt(
     enabled: Bool,
     isLocked: Bool,
     idleSeconds: TimeInterval,
-    thresholdSeconds: TimeInterval
+    thresholdSeconds: TimeInterval,
+    sessionActive: Bool = false
 ) -> PreemptAction {
-    guard enabled, !isLocked, thresholdSeconds > 0, idleSeconds >= thresholdSeconds else {
+    // A live Keep Awake Session pauses idle auto-lock: the user made an
+    // explicit keep-awake promise (often hands-off watching), and idle ≠
+    // away — locking on top of it reads as broken (field report 2026-09-07).
+    // The ⌃⌘Q chord path stays live; protection resumes when the Session ends.
+    guard enabled, !isLocked, !sessionActive, thresholdSeconds > 0, idleSeconds >= thresholdSeconds else {
         return .none
     }
     return .autoLock
@@ -116,6 +121,19 @@ func productionMonitorSource() -> String {
     return ""
 }
 
+func productionAppSource() -> String {
+    let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let candidates = [
+        here.appendingPathComponent("../Sources/Medusa/AppDelegate.swift"),
+        here.appendingPathComponent("Sources/Medusa/AppDelegate.swift"),
+        URL(fileURLWithPath: "Sources/Medusa/AppDelegate.swift")
+    ]
+    for url in candidates {
+        if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
+    }
+    return ""
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HARNESS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -157,6 +175,14 @@ expect(
 expect(
     "idle threshold zero → none (disabled picker)",
     idlePreempt(enabled: true, isLocked: false, idleSeconds: 999, thresholdSeconds: 0) == .none
+)
+expect(
+    "idle crossed but Session live → none (explicit keep-awake beats idle)",
+    idlePreempt(enabled: true, isLocked: false, idleSeconds: 999, thresholdSeconds: 60, sessionActive: true) == .none
+)
+expect(
+    "idle crossed, Session ended → autoLock (protection resumes)",
+    idlePreempt(enabled: true, isLocked: false, idleSeconds: 999, thresholdSeconds: 60, sessionActive: false) == .autoLock
 )
 
 // ── 2. Chord preempt ────────────────────────────────────────────────────────
@@ -247,6 +273,11 @@ do {
 do {
     let policy = productionSource()
     expect("LockPolicy defines idlePreempt", policy.contains("func idlePreempt"))
+    expect(
+        "LockPolicy.idlePreempt honors a live Session",
+        policy.contains("sessionActive"),
+        "idle must yield to an explicit keep-awake promise"
+    )
     expect("LockPolicy defines chordPreempt", policy.contains("func chordPreempt"))
     expect("LockPolicy defines shouldWarnRaceLoss", policy.contains("func shouldWarnRaceLoss"))
     expect("LockPolicy defines shouldHoldKeepAwake", policy.contains("func shouldHoldKeepAwake"))
@@ -279,6 +310,17 @@ do {
     expect(
         "monitor uses CGEventSource idle",
         monitor.contains("secondsSinceLastEventType")
+    )
+    expect(
+        "monitor pauses idle while a Session is live",
+        monitor.contains("isSessionActive"),
+        "idle auto-lock on top of an explicit Session is the 2026-09-07 report"
+    )
+    expect(
+        "app wires the Session gate to the live engine",
+        productionAppSource().contains("isSessionActive")
+            && productionAppSource().contains("hasSession"),
+        "the monitor's gate must read the real Session, not a stub"
     )
     expect(
         "monitor never draws over loginwindow (no shield on race)",

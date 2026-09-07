@@ -22,6 +22,10 @@ final class SystemLockPreemptMonitor {
     /// True while Medusa itself holds a lock — polling and chord intercept pause.
     var isMedusaLocked: () -> Bool = { false }
 
+    /// True while a Keep Awake Session is live — idle polling pauses (an
+    /// explicit keep-awake promise beats idle), but the ⌃⌘Q chord stays live.
+    var isSessionActive: () -> Bool = { false }
+
     private var idleTimer: Timer?
     private var defaultsObserver: NSObjectProtocol?
     private var systemLockObserver: NSObjectProtocol?
@@ -75,7 +79,8 @@ final class SystemLockPreemptMonitor {
         stopChordTap()
     }
 
-    /// Call when Medusa lock state flips so idle/chord arm only while unlocked.
+    /// Call when Medusa lock state flips — and when a Keep Awake Session
+    /// starts/stops — so idle/chord arm only while unlocked and session-free.
     func medusaLockStateDidChange() {
         reconcile()
     }
@@ -87,7 +92,9 @@ final class SystemLockPreemptMonitor {
         let locked = isMedusaLocked()
 
         if enabled && !locked {
-            startIdleTimer()
+            // Idle pauses under a live Session; the chord tap does not — ⌃⌘Q
+            // is an explicit lock gesture and stays honored.
+            if !isSessionActive() { startIdleTimer() } else { stopIdleTimer() }
             startChordTapIfNeeded()
         } else {
             stopIdleTimer()
@@ -114,7 +121,7 @@ final class SystemLockPreemptMonitor {
     }
 
     private func pollIdle() {
-        guard AppSettings.systemLockPreemptEnabled, !isMedusaLocked() else { return }
+        guard AppSettings.systemLockPreemptEnabled, !isMedusaLocked(), !isSessionActive() else { return }
 
         // kCGAnyInputEventType == (CGEventType)(~0)
         let idle = CGEventSource.secondsSinceLastEventType(
@@ -126,7 +133,8 @@ final class SystemLockPreemptMonitor {
             enabled: true,
             isLocked: false,
             idleSeconds: idle,
-            thresholdSeconds: threshold
+            thresholdSeconds: threshold,
+            sessionActive: isSessionActive()
         ) == .autoLock else { return }
 
         requestAutoLock()

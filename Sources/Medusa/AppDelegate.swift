@@ -43,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         keepAwake.onStateChange = { [weak self] in
             self?.menuBar.refreshState()
+            // Sessions pause/resume idle auto-lock — re-arm the preempt
+            // monitor so protection resumes the moment a Session ends.
+            self?.preempt.medusaLockStateDidChange()
         }
         keepAwake.onTick = { [weak self] in
             self?.menuBar.refreshCountdown()
@@ -77,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         keepAwakeHotKey.start()
 
         preempt.isMedusaLocked = { [weak lock] in lock?.isLocked ?? false }
+        preempt.isSessionActive = { [weak keepAwake] in keepAwake?.hasSession ?? false }
         preempt.onAutoLock = { [weak self] in
             self?.performAutoLock()
         }
