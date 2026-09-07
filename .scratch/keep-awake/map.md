@@ -2,9 +2,9 @@
 
 Labels: wayfinder:map
 
-## Destination
+## Destination — REACHED 2026-09-07 (v0.3.0)
 
-A shipped Medusa release where **Keep Awake is a first-class feature beside the Lock**: from the menu bar (or a hotkey) the user starts a keep-awake **Session** — for a duration, until a clock time, or indefinitely — with display-or-system awake level, editable presets, end-of-session notifications, and a battery guard; the Lock's existing keep-awake becomes one **Hold** on the same engine so the two features compose instead of colliding. The map closes when the spec is written, the implementation tickets are done and verified, and the release is out.
+A shipped Medusa release where **Keep Awake is a first-class feature beside the Lock**: from the menu bar (or a hotkey) the user starts a keep-awake **Session** — for a duration, until a clock time, or indefinitely — with display-or-system awake level, editable presets, end-of-session notifications, and a battery guard; the Lock's existing keep-awake becomes one **Hold** on the same engine so the two features compose instead of colliding. ~~The map closes when the spec is written, the implementation tickets are done and verified, and the release is out.~~ Done: spec + tickets 05–14 resolved, verified on hardware, released as v0.3.0 (commit 50e4f46, appcast live). Remainder (next session): Sparkle self-update eyeball + "while running" follow-up map.
 
 ## Notes
 
