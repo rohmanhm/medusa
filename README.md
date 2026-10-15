@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="docs/videos/medusa-intro.mp4"><img src="docs/images/intro-poster.jpg" alt="Watch the 48-second Medusa intro video" width="720"></a>
+</p>
+
+<p align="center">
   <img src="docs/images/lock-screen.png" alt="Medusa's lock screen: a large clock, the date, a custom message for passers-by, and the unlock hint on a black full-screen shield" width="720">
 </p>
 
