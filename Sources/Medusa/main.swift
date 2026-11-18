@@ -13,7 +13,8 @@ let snapshotFlags: [(flag: String, subject: SnapshotRunner.Subject)] = [
     ("--snapshot-shield", .shield),
     ("--snapshot-lockpane", .lockPane),
     ("--snapshot-keepawakepane", .keepAwakePane),
-    ("--snapshot-schedulepane", .schedulePane)
+    ("--snapshot-schedulepane", .schedulePane),
+    ("--snapshot-permissionspane", .permissionsPane)
 ]
 let snapshot = snapshotFlags.lazy.compactMap { entry -> SnapshotRunner? in
     guard let index = arguments.firstIndex(of: entry.flag), arguments.indices.contains(index + 1) else { return nil }

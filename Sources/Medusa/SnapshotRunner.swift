@@ -22,6 +22,7 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         case lockPane
         case keepAwakePane
         case schedulePane
+        case permissionsPane
         case motionProbe(seconds: TimeInterval)
     }
 
@@ -57,6 +58,10 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
             capturePane(KeepAwakePane(), as: .keepAwake, name: "pane-keep-awake") { exit(0) }
         case .schedulePane:
             captureSchedulePane()
+        case .permissionsPane:
+            // Held for six seconds so the pane's permission polling (or its
+            // absence, once both grants are in) shows in the unified log.
+            capturePane(PermissionsPane(), as: .permissions, name: "pane-permissions", after: 6) { exit(0) }
         case .motionProbe(let seconds):
             runMotionProbe(seconds: seconds)
         }
@@ -308,6 +313,7 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         _ pane: Pane,
         as tab: SettingsWindowController.Tab,
         name: String,
+        after settle: TimeInterval = 1.6,
         then next: @escaping () -> Void
     ) {
         let window = NSWindow(
@@ -320,7 +326,7 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: pane)
         window.orderFront(nil)
         shieldWindow = window
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + settle) { [self] in
             snap(window: window, name: name)
             window.orderOut(nil)
             next()
