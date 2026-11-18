@@ -268,6 +268,24 @@ final class LockController {
             name: NSWorkspace.screensDidWakeNotification,
             object: nil
         )
+        workspace.addObserver(
+            self,
+            selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(screensDidSleep),
+            name: NSWorkspace.screensDidSleepNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(sessionDidResignActive),
+            name: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil
+        )
 
         // Power-button trap fix: macOS posts these when its own lock screen
         // appears / is dismissed. Without them, a system unlock leaves
@@ -296,6 +314,9 @@ final class LockController {
     @objc private func systemDidWake() { handleSessionEvent(.didWake) }
     @objc private func sessionDidBecomeActive() { handleSessionEvent(.sessionDidBecomeActive) }
     @objc private func screensDidWake() { handleSessionEvent(.screensDidWake) }
+    @objc private func systemWillSleep() { handleSessionEvent(.willSleep) }
+    @objc private func screensDidSleep() { handleSessionEvent(.screensDidSleep) }
+    @objc private func sessionDidResignActive() { handleSessionEvent(.sessionDidResignActive) }
     @objc private func systemScreenDidLock() {
         // Distributed notifications can arrive off the main thread; hop first.
         DispatchQueue.main.async { [weak self] in self?.handleSessionEvent(.systemScreenDidLock) }
@@ -312,7 +333,8 @@ final class LockController {
             systemScreenLocked = true
         case .systemScreenDidUnlock:
             systemScreenLocked = false
-        case .didWake, .screensDidWake, .sessionDidBecomeActive:
+        case .didWake, .screensDidWake, .sessionDidBecomeActive,
+             .willSleep, .screensDidSleep, .sessionDidResignActive:
             break
         }
 
@@ -326,6 +348,8 @@ final class LockController {
             unlock()
         case .reaffirm:
             reaffirmLock()
+        case .cancelAuth:
+            cancelAuth()
         case .yield:
             yieldToSystemLock()
         case .ignore:
@@ -354,20 +378,25 @@ final class LockController {
         // session purposes; system unlock will run the full unlock() path.
     }
 
-    /// Re-hold the keep-awake assertion, re-enable the tap, clear any stuck auth
-    /// flag, and re-front the shields. Safe to call spuriously — every step is
-    /// idempotent while locked. Must never run while the system lock screen owns
-    /// the display (policy returns `.ignore` in that case).
+    /// Take the auth dialog down on the way into sleep. The lock stays up and
+    /// the next key or click presents a new dialog.
+    private func cancelAuth() {
+        guard isLocked, auth.isAuthenticating else { return }
+        auth.reset()
+        shield.setAuthMode(false)
+        tap.rearm()
+    }
+
+    /// Re-hold the keep-awake assertion, re-enable the tap, and re-front the
+    /// shields. Safe to call spuriously — every step is idempotent while
+    /// locked. Must never run while the system lock screen owns the display
+    /// (policy returns `.ignore` in that case).
+    ///
+    /// An auth dialog that is up is left alone. The key press that wakes a
+    /// dark display also summons the dialog, so resetting here (as this once
+    /// did) killed the dialog the user had just asked for.
     private func reaffirmLock() {
         guard isLocked, !systemScreenLocked else { return }
-        // Sleep mid-dialog can leave isAuthenticating latched if the LA
-        // completion was lost or delayed. Reset so the next touch re-presents
-        // instead of dying in `guard !isAuthenticating`.
-        if auth.isAuthenticating {
-            auth.reset()
-            shield.setAuthMode(false)
-            tap.rearm()
-        }
         if LockPolicy.shouldHoldKeepAwake(
             forceKeepAwake: forceKeepAwakeThisLock,
             keepAwakeSetting: AppSettings.keepAwake

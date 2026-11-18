@@ -92,6 +92,27 @@ final class LockControllerTests: XCTestCase {
         }
     }
 
+    func testGoingToSleepTakesTheDialogDownAndTheNextCueBringsItBack() {
+        for event in [LockPolicy.SessionEvent.screensDidSleep, .willSleep, .sessionDidResignActive] {
+            setUp()
+            lock.lock()
+            tap.cue()
+
+            lock.handleSessionEvent(event)
+            spin()
+
+            XCTAssertTrue(lock.isLocked, "\(event)")
+            XCTAssertEqual(dialog.cancelled, 1, "\(event)")
+            XCTAssertEqual(shield.windowLevels, [lockedLevel], "\(event)")
+
+            lock.handleSessionEvent(.didWake)
+            tap.cue()
+            XCTAssertEqual(dialog.presented, 2, "\(event)")
+            XCTAssertEqual(shield.windowLevels, [authLevel], "\(event)")
+            tearDown()
+        }
+    }
+
     func testCancelKeepsTheLockAndTheNextCueBringsTheDialogBack() {
         lock.lock()
         tap.cue()

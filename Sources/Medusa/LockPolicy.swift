@@ -31,13 +31,22 @@ enum LockPolicy {
         case systemScreenDidUnlock
         /// macOS's own lock screen appeared. `com.apple.screenIsLocked`.
         case systemScreenDidLock
+        /// The machine, the displays, or the login session are going away.
+        /// Nobody can use an auth dialog across that boundary.
+        case willSleep
+        case screensDidSleep
+        case sessionDidResignActive
     }
 
     /// What the controller should do when a session event arrives while locked.
     enum SessionReaction: Equatable {
-        /// Re-hold keep-awake, re-enable the tap, re-front shields. Also clear
-        /// any stuck in-flight auth so the next touch can re-present.
+        /// Re-hold keep-awake, re-enable the tap, re-front shields. An auth
+        /// dialog that is up stays up: the key press that woke the display is
+        /// the same one that summoned it.
         case reaffirm
+        /// Take down an in-flight auth dialog and stay locked, so the next
+        /// key or click after the wake presents a fresh one.
+        case cancelAuth
         /// Drop Medusa's lock entirely — the human already authenticated at the
         /// system boundary (or the session is no longer ours to hold).
         case release
@@ -136,6 +145,12 @@ enum LockPolicy {
             // brushed display sleep doesn't look dead.
             if systemScreenLocked { return .ignore }
             return .reaffirm
+        case .willSleep, .screensDidSleep, .sessionDidResignActive:
+            // Going away. A dialog left up across the boundary can lose its
+            // reply and latch the busy flag, so it comes down here, on the way
+            // out, never on the way back in.
+            if systemScreenLocked { return .ignore }
+            return .cancelAuth
         }
     }
 
