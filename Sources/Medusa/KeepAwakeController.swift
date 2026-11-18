@@ -21,7 +21,7 @@ final class KeepAwakeController {
 
     private let power = PowerAssertion()
     private(set) var session: Session?
-    private var lockHold = false
+    private var lockHold: AwakeLevel?
 
     private var timer: DispatchSourceTimer?
     private var appliedLevel: AwakeLevel?
@@ -95,7 +95,7 @@ final class KeepAwakeController {
     // MARK: Sessions
 
     var hasSession: Bool { session != nil }
-    var hasLockHold: Bool { lockHold }
+    var hasLockHold: Bool { lockHold != nil }
 
     var effectiveLevel: AwakeLevel? {
         KeepAwakePolicy.resolveLevel(session: session?.level, lockHold: lockHold)
@@ -146,22 +146,14 @@ final class KeepAwakeController {
 
     // MARK: Lock hold
 
-    /// The Lock places this while engaged (iff it should hold keep-awake) and
-    /// withdraws it on unlock. Returns whether the promise holds afterward.
+    /// The Lock places this while engaged (iff it should hold keep-awake), at
+    /// the level its Shield needs, and withdraws it with nil on unlock.
+    /// Idempotent. Returns whether the promise holds afterward.
     @discardableResult
-    func setLockHold(_ on: Bool) -> Bool {
-        lockHold = on
+    func setLockHold(_ level: AwakeLevel?) -> Bool {
+        lockHold = level
         reevaluate()
         onStateChange?()
-        return effectiveLevel == nil || power.held
-    }
-
-    /// Wake / reaffirm path: re-derive timeouts and re-hold. Returns whether
-    /// the promise holds afterward.
-    @discardableResult
-    func reaffirmLockHold() -> Bool {
-        lastBatteryCheck = .distantPast
-        reevaluate()
         return effectiveLevel == nil || power.held
     }
 
@@ -169,14 +161,14 @@ final class KeepAwakeController {
 
     func headerText(now: Date = Date()) -> String? {
         guard let session else {
-            return lockHold ? "Awake · lock" : nil
+            return hasLockHold ? "Awake · lock" : nil
         }
         return KeepAwakePolicy.headerText(
             deadline: session.deadline,
             indefinite: session.deadline == nil,
             untilTime: session.untilTime,
             untilDate: session.untilDate,
-            lockAlso: lockHold,
+            lockAlso: hasLockHold,
             now: now
         )
     }

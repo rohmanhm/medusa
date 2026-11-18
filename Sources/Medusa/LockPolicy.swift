@@ -202,4 +202,13 @@ enum LockPolicy {
     static func shouldHoldKeepAwake(forceKeepAwake: Bool, keepAwakeSetting: Bool) -> Bool {
         forceKeepAwake || keepAwakeSetting
     }
+
+    /// The Awake level of the Lock hold. Display awake while the Shield is up,
+    /// because the Shield must be visible. System awake while Medusa has
+    /// yielded to the System lock: the work keeps running, and with no Shield
+    /// to show the macOS lock screen is free to let the display sleep.
+    static func lockHoldLevel(holdKeepAwake: Bool, yielded: Bool) -> AwakeLevel? {
+        guard holdKeepAwake else { return nil }
+        return yielded ? .system : .display
+    }
 }

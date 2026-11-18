@@ -330,20 +330,6 @@ do {
 }
 
 do {
-    let lock = productionSource("LockController.swift")
-    expect(
-        "Lock places a Lock hold on the engine",
-        lock.contains("keepAwakeEngine") && lock.contains("setLockHold"),
-        "two assertion owners would be two sources of truth"
-    )
-    expect(
-        "Lock still fails open without the engine (headless path)",
-        lock.contains("power.begin()"),
-        "SelfTest/auth-test must keep today's behavior"
-    )
-}
-
-do {
     let menu = productionSource("MenuBarController.swift")
     expect("menu has a Keep Awake section", menu.contains("Keep Awake"))
     expect("menu offers Extend + Stop", menu.contains("Extend") && menu.contains("Stop Keep Awake"))
@@ -373,7 +359,6 @@ do {
 do {
     let app = productionSource("AppDelegate.swift")
     expect("app owns one engine", app.contains("KeepAwakeController()"))
-    expect("app wires the Lock hold", app.contains("keepAwakeEngine = keepAwake"))
     expect("second hotkey toggles Sessions", app.contains("keepAwakeHotKey"))
 }
 

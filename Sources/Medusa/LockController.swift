@@ -113,12 +113,7 @@ final class LockController {
         keepAwakeWarned = false
         forceKeepAwakeThisLock = forceKeepAwake
         systemScreenLocked = false
-        if LockPolicy.shouldHoldKeepAwake(
-            forceKeepAwake: forceKeepAwakeThisLock,
-            keepAwakeSetting: AppSettings.keepAwake
-        ) {
-            reportKeepAwakeFailureIfNeeded(held: keepAwake.setLockHold(true))
-        }
+        placeLockHold()
 
         isLocked = true
         startBackstop()
@@ -225,7 +220,7 @@ final class LockController {
         auth.reset()
         tap.stop()
         shield.hide()
-        keepAwake.setLockHold(false)
+        keepAwake.setLockHold(nil)
         wedgeCount = 0
         keepAwakeWarned = false
         forceKeepAwakeThisLock = false
@@ -366,8 +361,23 @@ final class LockController {
         // Hide, don't drop to auth level: auth level is still above the desktop
         // and can race loginwindow. Gone is the only safe z-order.
         shield.hide()
-        // Keep the power assertion and backstop — we are still "locked" for
-        // session purposes; system unlock will run the full unlock() path.
+        // Stay "locked" for session purposes (system unlock runs the full
+        // unlock() path) and keep the work running, but stop holding the
+        // display on: there is no Shield to show under the macOS lock screen.
+        placeLockHold()
+    }
+
+    /// Place, re-level, or withdraw the Lock hold to match the current state.
+    /// Safe to repeat.
+    private func placeLockHold() {
+        let level = LockPolicy.lockHoldLevel(
+            holdKeepAwake: LockPolicy.shouldHoldKeepAwake(
+                forceKeepAwake: forceKeepAwakeThisLock,
+                keepAwakeSetting: AppSettings.keepAwake
+            ),
+            yielded: systemScreenLocked
+        )
+        reportKeepAwakeFailureIfNeeded(held: keepAwake.setLockHold(level))
     }
 
     /// Take the auth dialog down on the way into sleep. The lock stays up and
@@ -389,12 +399,7 @@ final class LockController {
     /// did) killed the dialog the user had just asked for.
     private func reaffirmLock() {
         guard isLocked, !systemScreenLocked else { return }
-        if LockPolicy.shouldHoldKeepAwake(
-            forceKeepAwake: forceKeepAwakeThisLock,
-            keepAwakeSetting: AppSettings.keepAwake
-        ) {
-            reportKeepAwakeFailureIfNeeded(held: keepAwake.reaffirmLockHold())
-        }
+        placeLockHold()
         // After a yield the tap is fully stopped and shields are gone. A normal
         // reaffirm (display sleep without system lock) only needs ensureEnabled /
         // orderFront; if we somehow reaffirm with nothing installed, re-arm from

@@ -55,11 +55,9 @@ enum KeepAwakeEndReason: Equatable {
 /// must call through these helpers — if a deadline, guard, or composition
 /// rule lives only in the controller, the harness can't go red on it.
 enum KeepAwakePolicy {
-    /// Strongest live level wins. The Lock hold is always Display awake (the
-    /// Shield must be visible). Nil means nothing is holding — release.
-    static func resolveLevel(session: AwakeLevel?, lockHold: Bool) -> AwakeLevel? {
-        if lockHold { return .display }
-        return session
+    /// Strongest live level wins. Nil means nothing is holding — release.
+    static func resolveLevel(session: AwakeLevel?, lockHold: AwakeLevel?) -> AwakeLevel? {
+        [session, lockHold].compactMap { $0 }.max { $0.rank < $1.rank }
     }
 
     static func deadlinePassed(deadline: Date?, now: Date) -> Bool {
