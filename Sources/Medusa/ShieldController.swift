@@ -36,6 +36,16 @@ final class ShieldController {
     private var windows: [ShieldWindow] = []
     private(set) var isShown = false
 
+    /// The display layout to cover, one frame per display. Injected so the
+    /// rebuild path can be driven without real screens.
+    private let frames: () -> [NSRect]
+
+    init(frames: @escaping () -> [NSRect] = { NSScreen.screens.map(\.frame) }) {
+        self.frames = frames
+    }
+
+    var windowLevels: [NSWindow.Level] { windows.map(\.level) }
+
     /// The display layout the current overlays were built for. `screensChanged`
     /// compares against this so a notification that doesn't actually change the
     /// arrangement (macOS fires spurious ones) is ignored instead of tearing
@@ -94,7 +104,7 @@ final class ShieldController {
     /// when the display layout actually changed while we were away.
     func reaffirm() {
         guard isShown else { return }
-        if NSScreen.screens.map(\.frame) != screenSignature {
+        if frames() != screenSignature {
             rebuild()
             return
         }
@@ -113,7 +123,7 @@ final class ShieldController {
     /// display's overlay half-built while the other kept animating.
     @objc private func screensChanged() {
         guard isShown else { return }
-        let current = NSScreen.screens.map(\.frame)
+        let current = frames()
         guard current != screenSignature else { return }
         rebuildDebounce?.invalidate()
         let delay = ShieldRebuild.debounceDelay(previous: screenSignature, current: current)
@@ -126,24 +136,20 @@ final class ShieldController {
     }
 
     private func rebuild() {
-        let screens = NSScreen.screens
+        let layout = frames()
         // Gapless: create next overlays before ordering out the previous set
         // so a TV never sees a blank HDMI frame during HDMI/HDR renegotiation.
-        var next: [ShieldWindow] = []
-        next.reserveCapacity(screens.count)
-        for screen in screens {
-            next.append(makeWindow(for: screen))
-        }
+        let next = layout.map(makeWindow(for:))
         let previous = windows
         windows = next
-        screenSignature = screens.map(\.frame)
+        screenSignature = layout
         previous.forEach { $0.orderOut(nil) }
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func makeWindow(for screen: NSScreen) -> ShieldWindow {
+    private func makeWindow(for frame: NSRect) -> ShieldWindow {
         let window = ShieldWindow(
-            contentRect: screen.frame,
+            contentRect: frame,
             styleMask: .borderless,
             backing: .buffered,
             defer: false
@@ -155,8 +161,8 @@ final class ShieldController {
         window.hasShadow = false
         window.ignoresMouseEvents = false
         window.isReleasedWhenClosed = false
-        window.contentView = ShieldContentView(frame: NSRect(origin: .zero, size: screen.frame.size))
-        window.setFrame(screen.frame, display: true)
+        window.contentView = ShieldContentView(frame: NSRect(origin: .zero, size: frame.size))
+        window.setFrame(frame, display: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         return window
