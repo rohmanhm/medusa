@@ -4,17 +4,19 @@ import UserNotifications
 /// Keep Awake notifications: "Keep Awake ended" (un-chosen ends only) and the
 /// opt-in "Ending in …" nudge with an Extend action.
 ///
-/// Hard invariant: nothing here touches `UNUserNotificationCenter` without a
-/// bundle identifier. `current()` traps uncatchably when unbundled (`swift
-/// run`, every `--self-test` / `--lock-test` / `--snapshot-*` / probe entry
-/// point) — so every entry checks `available` first and every unbundled path
-/// stays notification-free. The menu's Extend path is the guaranteed path
-/// (banner-vs-alert is the user's setting).
+/// Hard invariant: nothing here touches `UNUserNotificationCenter` outside an
+/// app bundle. `current()` traps uncatchably when the process has no bundle
+/// proxy: `swift run`, every `--self-test` / `--lock-test` / `--snapshot-*` /
+/// probe entry point, and `xctest` (which does carry a bundle identifier).
+/// Every entry checks `available` first. The menu's Extend path is the
+/// guaranteed path (banner-vs-alert is the user's setting).
 enum KeepAwakeNotifier {
     static let categoryID = "medusa.keepawake"
     static let extendActionID = "medusa.keepawake.extend30"
 
-    static var available: Bool { Bundle.main.bundleIdentifier != nil }
+    static var available: Bool {
+        Bundle.main.bundleIdentifier != nil && Bundle.main.bundleURL.pathExtension == "app"
+    }
 
     /// Delegate + categories register at launch; authorization is deferred to
     /// the first Session start. No provisional authorization (provisional

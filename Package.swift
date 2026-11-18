@@ -20,6 +20,11 @@ let package = Package(
                 // and this rpath is how the executable finds it there.
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
             ]
+        ),
+        .testTarget(
+            name: "MedusaTests",
+            dependencies: ["Medusa"],
+            path: "Tests/MedusaTests"
         )
     ],
     swiftLanguageModes: [.v5]
