@@ -134,9 +134,12 @@ final class KeepAwakeEngineTests: XCTestCase {
         XCTAssertEqual(engine.effectiveLevel, .system)
     }
 
+    /// The engine's own assertions time out with TurnOff. (Display awake also
+    /// declares user activity, a separate assertion that always times out
+    /// with Release, so only TurnOff is the Session's bound.)
     func testAHoldThatOutlivesASessionCarriesNoKernelTimeoutFromIt() {
         engine.startSession(end: .duration(600), level: .display)
-        XCTAssertTrue(kernelAssertions().contains("Timeout will fire"))
+        XCTAssertTrue(kernelAssertions().contains("Action=TimeoutActionTurnOff"))
 
         engine.setLockHold(.display)
         clock = at(10, 11)
@@ -144,7 +147,8 @@ final class KeepAwakeEngineTests: XCTestCase {
 
         XCTAssertNil(engine.session)
         XCTAssertEqual(engine.effectiveLevel, .display)
-        XCTAssertFalse(kernelAssertions().contains("Timeout will fire"))
+        XCTAssertTrue(kernelAssertions().contains("Medusa keep awake (display)"))
+        XCTAssertFalse(kernelAssertions().contains("Action=TimeoutActionTurnOff"))
     }
 
     func testTheHeaderNamesEveryLiveHold() {

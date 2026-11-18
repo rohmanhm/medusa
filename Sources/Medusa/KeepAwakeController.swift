@@ -39,6 +39,8 @@ final class KeepAwakeController {
     /// has finished wiring it, then settles into whatever the state needs.
     private var tickPlan: TickPlan = .everySecond
     private var appliedLevel: AwakeLevel?
+    /// The Hold horizon the live assertion's kernel timeout was set from.
+    private var appliedBound: Date?
     private var lastRetime = Date.distantPast
     private var lastBatteryCheck = Date.distantPast
     private var cachedBattery = BatteryStatus()
@@ -277,9 +279,13 @@ final class KeepAwakeController {
         }
     }
 
-    /// Hold the effective level, releasing when nothing holds. Kernel timeouts
-    /// only bound finite deadlines (infinity can't be bounded); indefinite
-    /// Sessions and bare Lock holds carry none — same as today's lock.
+    /// Hold the effective level, releasing when nothing holds.
+    ///
+    /// The kernel timeout disarms a hung Medusa, so it may only exist when
+    /// every live Hold has an end, and it must track the latest one. A Hold
+    /// that outlived a finite Session used to inherit that Session's timeout:
+    /// the kernel turned the shared assertion off a minute after the Session
+    /// ended while the Lock still believed it was holding.
     private func applyAssertion(now: Date) {
         guard let effective = effectiveLevel else {
             if power.held {
@@ -287,24 +293,29 @@ final class KeepAwakeController {
                 Log.keepAwake.notice("assertion released")
             }
             appliedLevel = nil
+            appliedBound = nil
             failedWarned = false
             return
         }
-        var timeout: TimeInterval = 0
-        if let deadline = session?.deadline {
-            timeout = max(60, deadline.timeIntervalSince(now) + 60)
-        }
-        if appliedLevel != effective || !power.held {
+        let bound = KeepAwakePolicy.kernelBound(
+            session: session,
+            lockHold: hasLockHold,
+            schedule: scheduleStatus
+        )
+        let timeout = bound.map { max(60, $0.timeIntervalSince(now) + 60) } ?? 0
+        let boundednessChanged = (bound == nil) != (appliedBound == nil)
+        if appliedLevel != effective || !power.held || boundednessChanged {
             power.end()
             appliedLevel = power.begin(level: effective, timeoutSeconds: timeout) ? effective : nil
             lastRetime = now
             Log.keepAwake.notice(
-                "assertion level=\(effective.rawValue, privacy: .public) held=\(self.power.held, privacy: .public)"
+                "assertion level=\(effective.rawValue, privacy: .public) held=\(self.power.held, privacy: .public) bounded=\(bound != nil, privacy: .public)"
             )
-        } else if timeout > 0, now.timeIntervalSince(lastRetime) >= 60 {
+        } else if timeout > 0, bound != appliedBound || now.timeIntervalSince(lastRetime) >= 60 {
             power.retimeout(timeout)
             lastRetime = now
         }
+        appliedBound = bound
         if !power.held, !failedWarned {
             failedWarned = true
             DispatchQueue.main.async { [weak self] in self?.onKeepAwakeFailed?() }

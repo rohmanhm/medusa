@@ -129,6 +129,21 @@ enum KeepAwakePolicy {
         return changes.min().map(TickPlan.at) ?? .idle
     }
 
+    /// The moment after which no live Hold needs the Mac awake, or nil when
+    /// one of them is open-ended (an indefinite Session, the Lock hold). The
+    /// kernel timeout that disarms a hung Medusa is set from this, so it can
+    /// never cut short a Hold that is still owed.
+    static func kernelBound(session: KeepAwakeSession?, lockHold: Bool, schedule: ScheduleStatus) -> Date? {
+        if lockHold { return nil }
+        var ends: [Date] = []
+        if let session {
+            guard let deadline = session.deadline else { return nil }
+            ends.append(deadline)
+        }
+        if case .holding(let window) = schedule { ends.append(window.end) }
+        return ends.max()
+    }
+
     /// Which un-chosen end fired, if any. Battery wins ties (it is checked
     /// first so a dead laptop never waits for a deadline).
     static func endReason(
