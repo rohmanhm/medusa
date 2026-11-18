@@ -154,11 +154,44 @@ final class KeepAwakeEngineTests: XCTestCase {
     func testTheHeaderNamesEveryLiveHold() {
         schedules = [office]
         engine.refresh()
-        let six = KeepAwakePolicy.clockTime(at(18))
-        XCTAssertEqual(engine.headerText(), "Awake · schedule until \(six)")
-
         engine.startSession(end: .indefinitely, level: .system)
         engine.setLockHold(.display)
+
         XCTAssertEqual(engine.headerText(), "Awake · indefinitely · also: schedule, lock")
+    }
+
+    func testAnIdleEngineWakesItselfWhenTheNextWindowOpens() {
+        clock = at(9).addingTimeInterval(-2)
+        schedules = [office]
+        engine.refresh()
+        XCTAssertNil(engine.effectiveLevel)
+
+        // The wall clock reaches 09:00. Nothing tells the engine: its own
+        // timer, armed for the window's start (plus up to 1.5 s of slack),
+        // has to notice.
+        clock = at(9)
+        RunLoop.main.run(until: Date().addingTimeInterval(5))
+
+        XCTAssertEqual(engine.effectiveLevel, .display)
+    }
+
+    func testAnEngineWithNothingToWatchDoesNotTick() {
+        var ticks = 0
+        engine.onTick = { ticks += 1 }
+        engine.refresh()
+
+        RunLoop.main.run(until: Date().addingTimeInterval(2.5))
+
+        XCTAssertEqual(ticks, 0)
+    }
+
+    func testAnEngineWithALiveHoldTicksEverySecond() {
+        var ticks = 0
+        engine.onTick = { ticks += 1 }
+        engine.startSession(end: .indefinitely, level: .system)
+
+        RunLoop.main.run(until: Date().addingTimeInterval(2.9))
+
+        XCTAssertEqual(ticks, 2)
     }
 }

@@ -91,12 +91,9 @@ final class KeepAwakeController {
             name: .NSSystemClockDidChange,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(refresh),
-            name: UserDefaults.didChangeNotification,
-            object: nil
-        )
+        for name in [UserDefaults.didChangeNotification, .NSSystemTimeZoneDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: name, object: nil)
+        }
     }
 
     deinit {
