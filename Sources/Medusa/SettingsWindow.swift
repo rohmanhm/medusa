@@ -5,7 +5,7 @@ import SwiftUI
 /// SwiftUI grouped form. This is also the first-run experience — when
 /// permissions are missing the window opens straight on the Permissions tab,
 /// which absorbs the old onboarding flow.
-final class SettingsWindowController: NSWindowController {
+final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     enum Tab: Int, CaseIterable {
         case general
         case lockScreen
@@ -57,6 +57,14 @@ final class SettingsWindowController: NSWindowController {
 
     private let tabController = NSTabViewController()
 
+    /// Fired when the window closes. The owner drops the controller then, so
+    /// the SwiftUI panes (and every timer they run) die with the window and
+    /// the next open reads fresh state.
+    var onClose: (() -> Void)?
+
+    /// Where the window last sat, so a rebuilt window reopens in place.
+    private static var lastTopLeft: NSPoint?
+
     convenience init(updater: UpdaterController? = nil) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 480),
@@ -79,7 +87,19 @@ final class SettingsWindowController: NSWindowController {
             tabController.addTabViewItem(item)
         }
         window.contentViewController = tabController
-        window.center()
+        window.delegate = self
+        if let topLeft = Self.lastTopLeft {
+            window.setFrameTopLeftPoint(topLeft)
+        } else {
+            window.center()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let frame = window?.frame {
+            Self.lastTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
+        }
+        onClose?()
     }
 
     func show(tab: Tab? = nil) {

@@ -225,7 +225,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func showSettings(tab: SettingsWindowController.Tab? = nil) {
         if settings == nil {
-            settings = SettingsWindowController(updater: updater)
+            let controller = SettingsWindowController(updater: updater)
+            controller.onClose = { [weak self, weak controller] in
+                // Deferred: the window is mid-close inside this callback.
+                DispatchQueue.main.async {
+                    guard let self, self.settings === controller,
+                          controller?.window?.isVisible != true else { return }
+                    self.settings = nil
+                }
+            }
+            settings = controller
         }
         settings?.show(tab: tab)
     }

@@ -537,12 +537,11 @@ struct KeepAwakePane: View {
 // MARK: - Permissions
 
 struct PermissionsPane: View {
-    @State private var accessibility = Permissions.hasAccessibility()
-    @State private var inputMonitoring = Permissions.hasInputMonitoring()
+    @StateObject private var status = PermissionsStatus()
 
-    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
-    private var allGranted: Bool { accessibility && inputMonitoring }
+    private var accessibility: Bool { status.grants.accessibility }
+    private var inputMonitoring: Bool { status.grants.inputMonitoring }
+    private var allGranted: Bool { status.grants.all }
 
     var body: some View {
         Form {
@@ -592,10 +591,8 @@ struct PermissionsPane: View {
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onReceive(poll) { _ in
-            accessibility = Permissions.hasAccessibility()
-            inputMonitoring = Permissions.hasInputMonitoring()
-        }
+        .onAppear { status.start() }
+        .onDisappear { status.stop() }
     }
 }
 
