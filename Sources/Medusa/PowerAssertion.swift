@@ -19,6 +19,7 @@ import IOKit.pwr_mgt
 final class PowerAssertion {
     private var displayID: IOPMAssertionID = 0
     private var systemID: IOPMAssertionID = 0
+    private var userActivityID: IOPMAssertionID = 0
     private(set) var level: AwakeLevel?
     private var timeoutSeconds: TimeInterval = 0
 
@@ -66,6 +67,10 @@ final class PowerAssertion {
         self.level = (displayID != 0 || systemID != 0) ? level : nil
         held = displayID != 0 || systemID != 0
         self.timeoutSeconds = timeout
+        if held, level == .display {
+            // Idle-display assertion does not light a panel that's already off.
+            declareUserActivity()
+        }
         return held
     }
 
@@ -99,7 +104,25 @@ final class PowerAssertion {
         return ok
     }
 
+    /// Turn displays on and postpone idle dim. Required because
+    /// `PreventUserIdleDisplaySleep` does not light a panel that's already
+    /// off, and some externals (TVs especially) sleep independently of the
+    /// built-in. Pass the same ID back on each call so powerd coalesces.
+    @discardableResult
+    func declareUserActivity() -> Bool {
+        let result = IOPMAssertionDeclareUserActivity(
+            "Medusa keep awake (user activity)" as CFString,
+            kIOPMUserActiveLocal,
+            &userActivityID
+        )
+        return result == kIOReturnSuccess
+    }
+
     func end() {
+        if userActivityID != 0 {
+            IOPMAssertionRelease(userActivityID)
+            userActivityID = 0
+        }
         guard held else { return }
         if displayID != 0 { IOPMAssertionRelease(displayID) }
         if systemID != 0 { IOPMAssertionRelease(systemID) }

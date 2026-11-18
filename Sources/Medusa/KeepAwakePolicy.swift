@@ -92,6 +92,14 @@ enum KeepAwakePolicy {
         return warningFinal
     }
 
+    /// Display awake promises every panel stays lit. `PreventUserIdleDisplaySleep`
+    /// does not turn a display back on once it's off (IOPMLib) and does not
+    /// cover a panel that slept on its own (TVs, HDMI dropout). System awake
+    /// lets screens sleep; nothing holding means ignore.
+    static func shouldWakeDisplays(level: AwakeLevel?, anyDisplayAsleep: Bool) -> Bool {
+        level == .display && anyDisplayAsleep
+    }
+
     /// Sessions start only while unlocked; the keep-awake hotkey is ignored
     /// while locked (the menu isn't reachable under the Shield either).
     static func sessionShouldStart(isLocked: Bool) -> Bool { !isLocked }

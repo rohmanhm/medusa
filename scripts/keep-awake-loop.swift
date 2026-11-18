@@ -56,6 +56,23 @@ func batteryShouldTrip(
     return warningFinal
 }
 
+/// Display awake promises every panel stays lit. System awake lets screens
+/// sleep. A display that is already asleep must be woken — the idle-display
+/// assertion does not turn a panel back on (IOPMLib).
+func shouldWakeDisplays(level: AwakeLevel?, anyDisplayAsleep: Bool) -> Bool {
+    level == .display && anyDisplayAsleep
+}
+func overlayDebounceDelay(previous: [Frame], current: [Frame]) -> TimeInterval {
+    previous.count > current.count ? 2.0 : 0.35
+}
+
+struct Frame: Equatable {
+    var x: Double
+    var y: Double
+    var w: Double
+    var h: Double
+}
+
 func countdownText(deadline: Date?, now: Date) -> String? {
     guard let deadline else { return nil }
     let total = max(0, Int(deadline.timeIntervalSince(now).rounded(.up)))
@@ -204,6 +221,48 @@ expect(
     countdownText(deadline: at(3723), now: now) == "1:02:03"
 )
 
+// ── 4b. Display-awake must light every panel ───────────────────────────────
+
+expect(
+    "Display awake + a panel asleep → wake",
+    shouldWakeDisplays(level: .display, anyDisplayAsleep: true)
+)
+expect(
+    "Display awake + every panel lit → leave idle assertion to hold",
+    !shouldWakeDisplays(level: .display, anyDisplayAsleep: false)
+)
+expect(
+    "System awake lets screens sleep",
+    !shouldWakeDisplays(level: .system, anyDisplayAsleep: true)
+)
+expect(
+    "no Hold → do not wake displays",
+    !shouldWakeDisplays(level: nil, anyDisplayAsleep: true)
+)
+
+let tv = Frame(x: 0, y: 0, w: 2880, h: 1620)
+let builtin = Frame(x: -1728, y: 503, w: 1728, h: 1117)
+expect(
+    "overlay debounce stays 0.35 s for frame/add changes",
+    overlayDebounceDelay(previous: [tv, builtin], current: [tv, builtin]) == 0.35
+)
+expect(
+    "overlay debounce stays 0.35 s when a screen's frame changes",
+    overlayDebounceDelay(
+        previous: [tv, builtin],
+        current: [Frame(x: 0, y: 0, w: 1920, h: 1080), builtin]
+    ) == 0.35
+)
+expect(
+    "overlay debounce stays 0.35 s when a screen is added",
+    overlayDebounceDelay(previous: [builtin], current: [tv, builtin]) == 0.35
+)
+expect(
+    "overlay debounce waits 2 s when a screen disappears (TV HDMI dropout)",
+    overlayDebounceDelay(previous: [tv, builtin], current: [builtin]) == 2.0,
+    "tearing the TV overlay down mid-handshake leaves it dark while the built-in stays lit"
+)
+
 // ── 5. Production source contracts ─────────────────────────────────────────
 
 do {
@@ -212,6 +271,11 @@ do {
     expect("KeepAwakePolicy defines endReason", policy.contains("func endReason"))
     expect("KeepAwakePolicy defines batteryShouldTrip", policy.contains("func batteryShouldTrip"))
     expect("KeepAwakePolicy defines countdownText", policy.contains("func countdownText"))
+    expect(
+        "KeepAwakePolicy defines shouldWakeDisplays",
+        policy.contains("func shouldWakeDisplays"),
+        "Display awake must wake a panel that slept on its own"
+    )
     expect("KeepAwakePolicy ignores hotkey while locked", policy.contains("hotkeyAllowed"))
 }
 
@@ -231,6 +295,11 @@ do {
         "PowerAssertion supports Extend on the same ID",
         power.contains("func retimeout") && power.contains("IOPMAssertionSetProperty")
     )
+    expect(
+        "Display awake lights already-off displays",
+        power.contains("IOPMAssertionDeclareUserActivity") && power.contains("func declareUserActivity"),
+        "PreventUserIdleDisplaySleep does not turn a panel back on"
+    )
 }
 
 do {
@@ -247,6 +316,11 @@ do {
         "engine re-evaluates on wake + clock change",
         controller.contains("didWakeNotification") && controller.contains("NSSystemClockDidChange"),
         "timers stop during sleep"
+    )
+    expect(
+        "engine wakes displays that sleep under Display awake",
+        controller.contains("screensDidSleepNotification") && controller.contains("shouldWakeDisplays"),
+        "a TV can sleep on its own while the built-in stays lit"
     )
     expect(
         "engine never touches notifications unbundled (via guarded notifier)",
@@ -302,6 +376,20 @@ do {
     expect("app owns one engine", app.contains("KeepAwakeController()"))
     expect("app wires the Lock hold", app.contains("keepAwakeEngine = keepAwake"))
     expect("second hotkey toggles Sessions", app.contains("keepAwakeHotKey"))
+}
+
+do {
+    let shield = productionSource("ShieldController.swift")
+    expect(
+        "shield rebuild delays dropping a disappeared screen",
+        shield.contains("func debounceDelay") && shield.contains("removalGrace"),
+        "HDMI/HDR dropout on a TV must not tear its overlay down in 0.35 s"
+    )
+    expect(
+        "shield rebuild is gapless",
+        shield.contains("Gapless:"),
+        "create next overlays before ordering out the previous set"
+    )
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -9,6 +9,19 @@ final class ShieldWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+/// Debounce for overlay rebuilds. Frame/add changes coalesce quickly; a
+/// disappeared screen waits longer because TVs drop out for 1–2 s during
+/// HDMI/HDR renegotiation and tearing the overlay down in that window is
+/// what leaves the panel dark while the built-in stays lit.
+enum ShieldRebuild {
+    static let coalesceDelay: TimeInterval = 0.35
+    static let removalGrace: TimeInterval = 2.0
+
+    static func debounceDelay(previous: [NSRect], current: [NSRect]) -> TimeInterval {
+        previous.count > current.count ? removalGrace : coalesceDelay
+    }
+}
+
 /// Renders the black lock overlay on every display and keeps it in sync with
 /// display hot-plug / resolution changes.
 ///
@@ -100,9 +113,11 @@ final class ShieldController {
     /// display's overlay half-built while the other kept animating.
     @objc private func screensChanged() {
         guard isShown else { return }
-        guard NSScreen.screens.map(\.frame) != screenSignature else { return }
+        let current = NSScreen.screens.map(\.frame)
+        guard current != screenSignature else { return }
         rebuildDebounce?.invalidate()
-        let timer = Timer(timeInterval: 0.35, repeats: false) { [weak self] _ in
+        let delay = ShieldRebuild.debounceDelay(previous: screenSignature, current: current)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             self?.rebuildDebounce = nil
             self?.rebuild()
         }
@@ -111,32 +126,40 @@ final class ShieldController {
     }
 
     private func rebuild() {
-        windows.forEach { $0.orderOut(nil) }
-        windows.removeAll()
-
         let screens = NSScreen.screens
-        screenSignature = screens.map(\.frame)
+        // Gapless: create next overlays before ordering out the previous set
+        // so a TV never sees a blank HDMI frame during HDMI/HDR renegotiation.
+        var next: [ShieldWindow] = []
+        next.reserveCapacity(screens.count)
         for screen in screens {
-            let window = ShieldWindow(
-                contentRect: screen.frame,
-                styleMask: .borderless,
-                backing: .buffered,
-                defer: false
-            )
-            window.level = lockedLevel
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-            window.backgroundColor = .black
-            window.isOpaque = true
-            window.hasShadow = false
-            window.ignoresMouseEvents = false
-            window.isReleasedWhenClosed = false
-            window.contentView = ShieldContentView(frame: NSRect(origin: .zero, size: screen.frame.size))
-            window.setFrame(screen.frame, display: true)
-            window.makeKeyAndOrderFront(nil)
-            window.orderFrontRegardless()
-            windows.append(window)
+            next.append(makeWindow(for: screen))
         }
+        let previous = windows
+        windows = next
+        screenSignature = screens.map(\.frame)
+        previous.forEach { $0.orderOut(nil) }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func makeWindow(for screen: NSScreen) -> ShieldWindow {
+        let window = ShieldWindow(
+            contentRect: screen.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.level = lockedLevel
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.backgroundColor = .black
+        window.isOpaque = true
+        window.hasShadow = false
+        window.ignoresMouseEvents = false
+        window.isReleasedWhenClosed = false
+        window.contentView = ShieldContentView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        window.setFrame(screen.frame, display: true)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        return window
     }
 }
 
@@ -547,11 +570,20 @@ final class ShieldContentView: NSView {
         applyDrift()
     }
 
-    /// macOS 13 / last-resort path: CVDisplayLink off the main display, hopped
-    /// onto main with coalescing. Correct but coarser under main-queue load.
+    /// macOS 13 / last-resort path: CVDisplayLink off this window's screen
+    /// (not `CGMainDisplayID()`, which is the TV when it's the main display),
+    /// hopped onto main with coalescing. Correct but coarser under main-queue load.
     private func startCVDisplayLinkFallback() {
         var link: CVDisplayLink?
-        guard CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &link) == kCVReturnSuccess,
+        let displayID: CGDirectDisplayID = {
+            if let screen = window?.screen,
+               let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            {
+                return CGDirectDisplayID(truncating: number)
+            }
+            return CGMainDisplayID()
+        }()
+        guard CVDisplayLinkCreateWithCGDisplay(displayID, &link) == kCVReturnSuccess,
               let link
         else {
             let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in

@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import IOKit.ps
 
 /// One engine, many Holds: owns the single OS power assertion while any Hold
@@ -26,6 +27,7 @@ final class KeepAwakeController {
     private var appliedLevel: AwakeLevel?
     private var lastRetime = Date.distantPast
     private var lastBatteryCheck = Date.distantPast
+    private var lastUserActivity = Date.distantPast
     private var soonNotified = false
     private var failedWarned = false
 
@@ -55,6 +57,18 @@ final class KeepAwakeController {
             self,
             selector: #selector(reevaluateFromNotification),
             name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(reevaluateFromNotification),
+            name: NSWorkspace.screensDidSleepNotification,
+            object: nil
+        )
+        workspace.addObserver(
+            self,
+            selector: #selector(reevaluateFromNotification),
+            name: NSWorkspace.screensDidWakeNotification,
             object: nil
         )
         DistributedNotificationCenter.default().addObserver(
@@ -211,6 +225,7 @@ final class KeepAwakeController {
                     KeepAwakeNotifier.postEnded(reason: ended)
                 }
                 onSessionEnded?(ended)
+                wakeDisplaysIfNeeded()
                 return
             }
 
@@ -228,6 +243,7 @@ final class KeepAwakeController {
         }
 
         applyAssertion(now: now)
+        wakeDisplaysIfNeeded()
     }
 
     /// Hold the effective level, releasing when nothing holds. Kernel timeouts
@@ -256,6 +272,28 @@ final class KeepAwakeController {
             failedWarned = true
             DispatchQueue.main.async { [weak self] in self?.onKeepAwakeFailed?() }
         }
+    }
+
+    /// Display awake promises every panel stays lit. Poll `CGDisplayIsAsleep`
+    /// (per-display — `screensDidSleep` only fires when *all* screens sleep)
+    /// and declare user activity so a TV that went dark on its own comes back
+    /// while the built-in stayed on.
+    private func wakeDisplaysIfNeeded() {
+        let asleep = Self.anyDisplayAsleep()
+        guard KeepAwakePolicy.shouldWakeDisplays(level: effectiveLevel, anyDisplayAsleep: asleep) else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastUserActivity) >= 5 else { return }
+        lastUserActivity = now
+        power.declareUserActivity()
+    }
+
+    private static func anyDisplayAsleep() -> Bool {
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+        guard count > 0 else { return false }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetOnlineDisplayList(count, &ids, &count)
+        return (0..<Int(count)).contains { CGDisplayIsAsleep(ids[$0]) != 0 }
     }
 
     // MARK: Battery
