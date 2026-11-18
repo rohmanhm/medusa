@@ -3,30 +3,45 @@ import CoreGraphics
 import IOKit.ps
 
 /// One engine, many Holds: owns the single OS power assertion while any Hold
-/// is live — the user's Session plus the Lock hold the Lock places while
-/// engaged. Strongest Awake level wins; the Lock hold is always Display.
+/// is live — the user's Session, the Lock hold the Lock places while engaged,
+/// and the Schedule hold an open Schedule window places. Strongest Awake
+/// level wins.
 ///
-/// Deadlines are absolute end times. The ≤ 1 s self-correcting tick that
-/// re-reads the wall clock is the sole authority (timers stop during sleep),
-/// re-evaluated on wake and on system-clock change. The kernel timeout is a
-/// fail-safe outer bound only, re-derived from `deadline − now` on every
-/// wake and Extend.
+/// Deadlines are absolute end times. While a Hold is live, a ≤ 1 s
+/// self-correcting tick that re-reads the wall clock is the sole authority
+/// (timers stop during sleep), re-evaluated on wake and on system-clock
+/// change. With nothing held the engine sleeps until the next Schedule
+/// window opens. The kernel timeout is a fail-safe outer bound only,
+/// re-derived on every evaluation.
 final class KeepAwakeController {
-    struct Session {
-        var deadline: Date?
-        var level: AwakeLevel
-        var untilTime: Bool
-        var untilDate: Date?
+    struct BatteryStatus: Equatable {
+        var onBattery = false
+        var percent: Double?
+        var warningFinal = false
     }
 
     private let power = PowerAssertion()
-    private(set) var session: Session?
-    private var lockHold: AwakeLevel?
+    /// The clock, the stored Schedules, and the power source are the engine's
+    /// system boundaries. The app takes the defaults.
+    private let now: () -> Date
+    private let loadSchedules: () -> [KeepAwakeSchedule]
+    private let readBattery: () -> BatteryStatus
 
-    private var timer: DispatchSourceTimer?
+    private(set) var session: KeepAwakeSession?
+    private var lockHold: AwakeLevel?
+    private var schedules: [KeepAwakeSchedule]
+    /// Set by "Pause Schedule": the end of the window that was open then.
+    private var schedulePausedUntil: Date?
+    private(set) var scheduleStatus: ScheduleStatus = .idle
+
+    private let timer: DispatchSourceTimer
+    /// The engine starts ticking so its first evaluation happens once the app
+    /// has finished wiring it, then settles into whatever the state needs.
+    private var tickPlan: TickPlan = .everySecond
     private var appliedLevel: AwakeLevel?
     private var lastRetime = Date.distantPast
     private var lastBatteryCheck = Date.distantPast
+    private var cachedBattery = BatteryStatus()
     private var lastUserActivity = Date.distantPast
     private var soonNotified = false
     private var failedWarned = false
@@ -45,48 +60,46 @@ final class KeepAwakeController {
     /// headless users leave it nil (treated as unlocked).
     var isLocked: (() -> Bool)?
 
-    init() {
-        let timer = DispatchSource.makeTimerSource(queue: .main)
+    init(
+        now: @escaping () -> Date = Date.init,
+        schedules: @escaping () -> [KeepAwakeSchedule] = { AppSettings.keepAwakeSchedules },
+        battery: @escaping () -> BatteryStatus = KeepAwakeController.systemBattery
+    ) {
+        self.now = now
+        loadSchedules = schedules
+        readBattery = battery
+        self.schedules = schedules()
+
+        timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 1, repeating: 1.0, leeway: .milliseconds(200))
         timer.setEventHandler { [weak self] in self?.tick() }
         timer.resume()
-        self.timer = timer
 
         let workspace = NSWorkspace.shared.notificationCenter
-        workspace.addObserver(
-            self,
-            selector: #selector(reevaluateFromNotification),
-            name: NSWorkspace.didWakeNotification,
-            object: nil
-        )
-        workspace.addObserver(
-            self,
-            selector: #selector(reevaluateFromNotification),
-            name: NSWorkspace.screensDidSleepNotification,
-            object: nil
-        )
-        workspace.addObserver(
-            self,
-            selector: #selector(reevaluateFromNotification),
-            name: NSWorkspace.screensDidWakeNotification,
-            object: nil
-        )
+        for name in [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.screensDidSleepNotification,
+            NSWorkspace.screensDidWakeNotification
+        ] {
+            workspace.addObserver(self, selector: #selector(refresh), name: name, object: nil)
+        }
         DistributedNotificationCenter.default().addObserver(
             self,
-            selector: #selector(reevaluateFromNotification),
+            selector: #selector(refresh),
             name: .NSSystemClockDidChange,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(reevaluateFromNotification),
+            selector: #selector(refresh),
             name: UserDefaults.didChangeNotification,
             object: nil
         )
     }
 
     deinit {
-        timer?.cancel()
+        timer.cancel()
+        power.end()
         NotificationCenter.default.removeObserver(self)
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
@@ -98,20 +111,26 @@ final class KeepAwakeController {
     var hasLockHold: Bool { lockHold != nil }
 
     var effectiveLevel: AwakeLevel? {
-        KeepAwakePolicy.resolveLevel(session: session?.level, lockHold: lockHold)
+        KeepAwakePolicy.resolveLevel(
+            session: session?.level,
+            lockHold: lockHold,
+            schedule: scheduleStatus.heldLevel
+        )
     }
 
     /// Start (or replace) a Session. Ignored while locked.
     func startSession(end: KeepAwakeEndCondition, level: AwakeLevel) {
         guard KeepAwakePolicy.sessionShouldStart(isLocked: isLocked?() ?? false) else { return }
-        let now = Date()
-        session = Session(
-            deadline: end.deadline(from: now),
+        let session = KeepAwakeSession(
+            deadline: end.deadline(from: now()),
             level: level,
-            untilTime: end.isUntilTime,
-            untilDate: end.isUntilTime ? end.deadline(from: now) : nil
+            endsAtClockTime: end.isUntilTime
         )
+        self.session = session
         soonNotified = false
+        Log.keepAwake.notice(
+            "session started level=\(level.rawValue, privacy: .public) deadline=\(String(describing: session.deadline), privacy: .public)"
+        )
         KeepAwakeNotifier.requestAuthorizationIfNeeded()
         reevaluate()
         onStateChange?()
@@ -122,6 +141,7 @@ final class KeepAwakeController {
         guard session != nil else { return }
         session = nil
         soonNotified = false
+        Log.keepAwake.notice("session stopped by the user")
         reevaluate()
         onStateChange?()
     }
@@ -130,14 +150,10 @@ final class KeepAwakeController {
     /// indefinite Session has no end to push, so it stays indefinite.
     func extend(minutes: Int) {
         guard var current = session, let deadline = current.deadline else { return }
-        let now = Date()
-        current.deadline = max(deadline, now).addingTimeInterval(TimeInterval(minutes * 60))
-        if current.untilTime {
-            // An extended Until… Session becomes a duration Session ending at
-            // the pushed time — the copy stays honest about the real end.
-            current.untilTime = false
-            current.untilDate = nil
-        }
+        current.deadline = max(deadline, now()).addingTimeInterval(TimeInterval(minutes * 60))
+        // An extended Until… Session ends at the pushed time, which is no
+        // longer the clock time the user picked. The copy stays honest.
+        current.endsAtClockTime = false
         session = current
         soonNotified = false
         reevaluate()
@@ -157,70 +173,71 @@ final class KeepAwakeController {
         return effectiveLevel == nil || power.held
     }
 
+    // MARK: Schedule hold
+
+    /// Let the Mac sleep for the rest of the open Schedule window. The next
+    /// window opens as usual.
+    func pauseSchedule() {
+        guard case .holding(let window) = scheduleStatus else { return }
+        schedulePausedUntil = window.end
+        reevaluate()
+    }
+
+    func resumeSchedule() {
+        guard schedulePausedUntil != nil else { return }
+        schedulePausedUntil = nil
+        reevaluate()
+    }
+
     // MARK: Derived UI
 
-    func headerText(now: Date = Date()) -> String? {
-        guard let session else {
-            return hasLockHold ? "Awake · lock" : nil
-        }
-        return KeepAwakePolicy.headerText(
-            deadline: session.deadline,
-            indefinite: session.deadline == nil,
-            untilTime: session.untilTime,
-            untilDate: session.untilDate,
-            lockAlso: hasLockHold,
-            now: now
+    func headerText() -> String? {
+        KeepAwakePolicy.headerText(
+            session: session,
+            schedule: scheduleStatus,
+            lockHold: hasLockHold,
+            now: now()
         )
     }
 
     // MARK: Evaluation
 
-    @objc private func reevaluateFromNotification() {
+    /// Re-read everything that changes behind the engine's back (stored
+    /// Schedules, the power source), then evaluate. Wake, display sleep and
+    /// wake, clock changes, and settings changes all land here.
+    @objc func refresh() {
         lastBatteryCheck = .distantPast
+        schedules = loadSchedules()
         reevaluate()
     }
 
     private func tick() {
+        // A one-shot plan has fired. Clear it so the evaluation below re-arms
+        // the timer even when it lands on the same plan.
+        if case .at = tickPlan { tickPlan = .idle }
         reevaluate()
         onTick?()
     }
 
     private func reevaluate() {
-        let now = Date()
+        let now = now()
+        let window = SchedulePolicy.window(schedules: schedules, at: now)
+        let batteryTripped = (session != nil || window != nil) && isBatteryTripped(now: now)
 
-        // Un-chosen ends first: battery, then deadline.
-        if session != nil {
-            let battery = KeepAwakePolicy.batteryShouldTrip(
-                enabled: AppSettings.keepAwakeGuardEnabled,
-                onBattery: batteryStatus().onBattery,
-                percent: batteryStatus().percent,
-                warningFinal: batteryStatus().warningFinal,
-                threshold: AppSettings.keepAwakeGuardThreshold
-            )
-            if let reason = KeepAwakePolicy.endReason(
-                deadline: session?.deadline,
-                deadlineIsUntilTime: session?.untilTime ?? false,
+        // Un-chosen Session ends first: battery, then deadline.
+        var ended: KeepAwakeEndReason?
+        if let current = session {
+            ended = KeepAwakePolicy.endReason(
+                deadline: current.deadline,
+                deadlineIsUntilTime: current.endsAtClockTime,
                 now: now,
-                batteryTripped: battery
-            ) {
-                let ended = reason
+                batteryTripped: batteryTripped
+            )
+            if ended != nil {
                 session = nil
                 soonNotified = false
-                applyAssertion(now: now)
-                onStateChange?()
-                if AppSettings.keepAwakeEndedNotify {
-                    KeepAwakeNotifier.postEnded(reason: ended)
-                }
-                onSessionEnded?(ended)
-                wakeDisplaysIfNeeded()
-                return
-            }
-
-            // Opt-in ending-soon nudge with Extend.
-            if AppSettings.keepAwakeSoonNotify,
-               !soonNotified,
-               let deadline = session?.deadline
-            {
+            } else if AppSettings.keepAwakeSoonNotify, !soonNotified, let deadline = current.deadline {
+                // Opt-in ending-soon nudge with Extend.
                 let lead = TimeInterval(max(1, AppSettings.keepAwakeSoonMinutes) * 60)
                 if now >= deadline.addingTimeInterval(-lead), now < deadline {
                     soonNotified = true
@@ -229,8 +246,35 @@ final class KeepAwakeController {
             }
         }
 
+        if let pausedUntil = schedulePausedUntil, now >= pausedUntil {
+            schedulePausedUntil = nil
+        }
+        let status = KeepAwakePolicy.scheduleStatus(
+            window: window,
+            pausedUntil: schedulePausedUntil,
+            batteryTripped: batteryTripped,
+            now: now
+        )
+        let scheduleChanged = status != scheduleStatus
+        scheduleStatus = status
+
         applyAssertion(now: now)
-        wakeDisplaysIfNeeded()
+        wakeDisplaysIfNeeded(now: now)
+        retime(now: now)
+
+        if scheduleChanged {
+            Log.keepAwake.notice("schedule \(String(describing: status), privacy: .public)")
+        }
+        if ended != nil || scheduleChanged {
+            onStateChange?()
+        }
+        if let ended {
+            Log.keepAwake.notice("session ended reason=\(String(describing: ended), privacy: .public)")
+            if AppSettings.keepAwakeEndedNotify {
+                KeepAwakeNotifier.postEnded(reason: ended, stillAwake: effectiveLevel != nil)
+            }
+            onSessionEnded?(ended)
+        }
     }
 
     /// Hold the effective level, releasing when nothing holds. Kernel timeouts
@@ -238,7 +282,10 @@ final class KeepAwakeController {
     /// Sessions and bare Lock holds carry none — same as today's lock.
     private func applyAssertion(now: Date) {
         guard let effective = effectiveLevel else {
-            if power.held { power.end() }
+            if power.held {
+                power.end()
+                Log.keepAwake.notice("assertion released")
+            }
             appliedLevel = nil
             failedWarned = false
             return
@@ -251,6 +298,9 @@ final class KeepAwakeController {
             power.end()
             appliedLevel = power.begin(level: effective, timeoutSeconds: timeout) ? effective : nil
             lastRetime = now
+            Log.keepAwake.notice(
+                "assertion level=\(effective.rawValue, privacy: .public) held=\(self.power.held, privacy: .public)"
+            )
         } else if timeout > 0, now.timeIntervalSince(lastRetime) >= 60 {
             power.retimeout(timeout)
             lastRetime = now
@@ -265,10 +315,12 @@ final class KeepAwakeController {
     /// (per-display — `screensDidSleep` only fires when *all* screens sleep)
     /// and declare user activity so a TV that went dark on its own comes back
     /// while the built-in stayed on.
-    private func wakeDisplaysIfNeeded() {
-        let asleep = Self.anyDisplayAsleep()
-        guard KeepAwakePolicy.shouldWakeDisplays(level: effectiveLevel, anyDisplayAsleep: asleep) else { return }
-        let now = Date()
+    private func wakeDisplaysIfNeeded(now: Date) {
+        let level = effectiveLevel
+        guard KeepAwakePolicy.shouldWakeDisplays(
+            level: level,
+            anyDisplayAsleep: level == .display && Self.anyDisplayAsleep()
+        ) else { return }
         guard now.timeIntervalSince(lastUserActivity) >= 5 else { return }
         lastUserActivity = now
         power.declareUserActivity()
@@ -283,25 +335,47 @@ final class KeepAwakeController {
         return (0..<Int(count)).contains { CGDisplayIsAsleep(ids[$0]) != 0 }
     }
 
+    /// Re-arm the one timer for what the state needs now.
+    private func retime(now: Date) {
+        let plan = KeepAwakePolicy.tickPlan(
+            holding: effectiveLevel != nil,
+            schedule: scheduleStatus,
+            nextScheduleStart: SchedulePolicy.nextStart(schedules: schedules, after: now),
+            now: now
+        )
+        guard plan != tickPlan else { return }
+        tickPlan = plan
+        switch plan {
+        case .everySecond:
+            timer.schedule(deadline: .now() + 1, repeating: 1.0, leeway: .milliseconds(200))
+        case .at(let date):
+            // Wall-clock deadline: it keeps counting through sleep and follows
+            // clock changes. Half a second late, so the tick lands inside the
+            // window it is waiting for.
+            let delay = max(0, date.timeIntervalSince(now)) + 0.5
+            timer.schedule(wallDeadline: .now() + delay, repeating: .never, leeway: .seconds(1))
+        case .idle:
+            timer.schedule(deadline: .distantFuture)
+        }
+    }
+
     // MARK: Battery
 
-    private struct BatteryStatus {
-        var onBattery = false
-        var percent: Double?
-        var warningFinal = false
+    private func isBatteryTripped(now: Date) -> Bool {
+        if now.timeIntervalSince(lastBatteryCheck) >= 15 || now < lastBatteryCheck {
+            lastBatteryCheck = now
+            cachedBattery = readBattery()
+        }
+        return KeepAwakePolicy.batteryShouldTrip(
+            enabled: AppSettings.keepAwakeGuardEnabled,
+            onBattery: cachedBattery.onBattery,
+            percent: cachedBattery.percent,
+            warningFinal: cachedBattery.warningFinal,
+            threshold: AppSettings.keepAwakeGuardThreshold
+        )
     }
 
-    private var cachedBattery = BatteryStatus()
-
-    private func batteryStatus() -> BatteryStatus {
-        let now = Date()
-        if now.timeIntervalSince(lastBatteryCheck) < 15 { return cachedBattery }
-        lastBatteryCheck = now
-        cachedBattery = Self.readBattery()
-        return cachedBattery
-    }
-
-    private static func readBattery() -> BatteryStatus {
+    static func systemBattery() -> BatteryStatus {
         var status = BatteryStatus()
         let blob = IOPSCopyPowerSourcesInfo().takeRetainedValue()
         let providing = IOPSGetProvidingPowerSourceType(blob).takeRetainedValue() as String

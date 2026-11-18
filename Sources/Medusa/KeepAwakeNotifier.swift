@@ -48,7 +48,9 @@ enum KeepAwakeNotifier {
         }
     }
 
-    static func postEnded(reason: KeepAwakeEndReason) {
+    /// `stillAwake`: another Hold (a Schedule, the Lock) outlives the Session,
+    /// so the Mac is not about to sleep and the copy must not say it will.
+    static func postEnded(reason: KeepAwakeEndReason, stillAwake: Bool) {
         guard available, AppSettings.keepAwakeEndedNotify else { return }
         let reasonCopy: String
         switch reason {
@@ -61,7 +63,9 @@ enum KeepAwakeNotifier {
         }
         post(
             title: "Keep Awake ended",
-            body: reasonCopy + " Your Mac will sleep on its normal schedule.",
+            body: reasonCopy + (stillAwake
+                ? " Your Mac is still being kept awake by a Schedule or the Lock."
+                : " Your Mac will sleep on its normal schedule."),
             withExtend: false
         )
     }

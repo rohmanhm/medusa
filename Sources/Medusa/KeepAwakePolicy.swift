@@ -51,18 +51,82 @@ enum KeepAwakeEndReason: Equatable {
     case battery
 }
 
+/// A live Session: when it ends (nil for indefinitely), how much it keeps on,
+/// and whether the user asked for a clock time rather than a duration.
+struct KeepAwakeSession: Equatable {
+    var deadline: Date?
+    var level: AwakeLevel
+    var endsAtClockTime: Bool
+}
+
+/// Where the Schedules stand right now.
+enum ScheduleStatus: Equatable {
+    /// No window is open.
+    case idle
+    /// A window is open and its Schedule hold is live.
+    case holding(SchedulePolicy.Window)
+    /// A window is open, but the user let the Mac sleep until it ends.
+    case paused(until: Date)
+    /// A window is open, but the Battery guard keeps its hold off.
+    case batteryLow
+
+    var heldLevel: AwakeLevel? {
+        if case .holding(let window) = self { return window.level }
+        return nil
+    }
+}
+
+/// When the engine next has to look at the clock.
+enum TickPlan: Equatable {
+    /// A Hold is live: deadlines, the Battery guard, and window ends are
+    /// checked against the wall clock every second.
+    case everySecond
+    /// Nothing holds, but something will change at this time.
+    case at(Date)
+    /// Nothing holds and nothing is scheduled. The engine sleeps.
+    case idle
+}
+
 /// Pure decision surface for Keep Awake. Production `KeepAwakeController`
 /// must call through these helpers — if a deadline, guard, or composition
 /// rule lives only in the controller, the harness can't go red on it.
 enum KeepAwakePolicy {
     /// Strongest live level wins. Nil means nothing is holding — release.
-    static func resolveLevel(session: AwakeLevel?, lockHold: AwakeLevel?) -> AwakeLevel? {
-        [session, lockHold].compactMap { $0 }.max { $0.rank < $1.rank }
+    static func resolveLevel(session: AwakeLevel?, lockHold: AwakeLevel?, schedule: AwakeLevel? = nil) -> AwakeLevel? {
+        [session, lockHold, schedule].compactMap { $0 }.max { $0.rank < $1.rank }
     }
 
-    static func deadlinePassed(deadline: Date?, now: Date) -> Bool {
-        guard let deadline else { return false }
-        return now >= deadline
+    /// A Schedule hold is live while a window is open, unless the user paused
+    /// it for the rest of that window or the Battery guard has tripped.
+    static func scheduleStatus(
+        window: SchedulePolicy.Window?,
+        pausedUntil: Date?,
+        batteryTripped: Bool,
+        now: Date
+    ) -> ScheduleStatus {
+        guard let window else { return .idle }
+        if let pausedUntil, now < pausedUntil { return .paused(until: pausedUntil) }
+        return batteryTripped ? .batteryLow : .holding(window)
+    }
+
+    /// An idle engine should not wake once a second for years. With no Hold
+    /// live it sleeps until the next thing that can change: a window opening,
+    /// a pause running out, or (while the Battery guard holds a Schedule off)
+    /// a look at the power source a minute from now.
+    static func tickPlan(
+        holding: Bool,
+        schedule: ScheduleStatus,
+        nextScheduleStart: Date?,
+        now: Date
+    ) -> TickPlan {
+        if holding { return .everySecond }
+        var changes = [nextScheduleStart].compactMap { $0 }
+        switch schedule {
+        case .paused(let until): changes.append(until)
+        case .batteryLow: changes.append(now.addingTimeInterval(60))
+        case .idle, .holding: break
+        }
+        return changes.min().map(TickPlan.at) ?? .idle
     }
 
     /// Which un-chosen end fired, if any. Battery wins ties (it is checked
@@ -78,8 +142,9 @@ enum KeepAwakePolicy {
         return deadlineIsUntilTime ? .timePassed : .elapsed
     }
 
-    /// Sessions-only v1 guard: on battery and enabled, trip at ≤ threshold
-    /// percent OR the OS Final warning (~10 min real runtime on tired cells).
+    /// On battery and enabled, trip at ≤ threshold percent OR the OS Final
+    /// warning (~10 min real runtime on tired cells). Covers Sessions and
+    /// Schedules: both leave a Mac awake with nobody watching the charge.
     static func batteryShouldTrip(
         enabled: Bool,
         onBattery: Bool,
@@ -105,28 +170,55 @@ enum KeepAwakePolicy {
     static func sessionShouldStart(isLocked: Bool) -> Bool { !isLocked }
     static func hotkeyAllowed(isLocked: Bool) -> Bool { !isLocked }
 
-    /// Active menu header. Verbose `1 h 23 m` phrasing lives here only — the
-    /// bar-adjacent countdown uses the compact `1:23` format.
+    /// The disabled header line of the Keep Awake menu: the Hold the user
+    /// would name first, then the others, so nothing about why the Mac is
+    /// awake is hidden. Nil when nothing holds. Verbose `1 h 23 m` phrasing
+    /// lives here only — the bar-adjacent countdown uses the compact format.
     static func headerText(
-        deadline: Date?,
-        indefinite: Bool,
-        untilTime: Bool,
-        untilDate: Date?,
-        lockAlso: Bool,
-        now: Date
-    ) -> String {
+        session: KeepAwakeSession?,
+        schedule: ScheduleStatus,
+        lockHold: Bool,
+        now: Date,
+        clockTime: (Date) -> String = KeepAwakePolicy.clockTime
+    ) -> String? {
         let base: String
-        if indefinite || deadline == nil {
-            base = "Awake · indefinitely"
-        } else if untilTime, let untilDate {
-            base = "Awake · until \(Self.untilTimeFormatter.string(from: untilDate))"
-        } else if let deadline {
-            let remaining = max(0, deadline.timeIntervalSince(now))
-            base = "Awake · \(Self.verboseRemaining(remaining)) left"
+        var others: [String] = []
+        if let session {
+            if let deadline = session.deadline {
+                base = session.endsAtClockTime
+                    ? "Awake · until \(clockTime(deadline))"
+                    : "Awake · \(verboseRemaining(max(0, deadline.timeIntervalSince(now)))) left"
+            } else {
+                base = "Awake · indefinitely"
+            }
+            if schedule.heldLevel != nil { others.append("schedule") }
+        } else if case .holding(let window) = schedule {
+            base = "Awake · schedule until \(clockTime(window.end))"
+        } else if lockHold {
+            return "Awake · lock"
         } else {
-            base = "Awake · indefinitely"
+            return nil
         }
-        return lockAlso ? base + " · also: lock" : base
+        if lockHold { others.append("lock") }
+        return others.isEmpty ? base : base + " · also: " + others.joined(separator: ", ")
+    }
+
+    /// A second menu line for a Schedule whose window is open but which is
+    /// not holding, so the icon going idle inside a window is explained.
+    static func scheduleNote(
+        _ status: ScheduleStatus,
+        clockTime: (Date) -> String = KeepAwakePolicy.clockTime
+    ) -> String? {
+        switch status {
+        case .paused(let until): return "Schedule paused until \(clockTime(until))"
+        case .batteryLow: return "Schedule waiting · battery low"
+        case .idle, .holding: return nil
+        }
+    }
+
+    /// A clock time the way the user's locale writes it ("5:00 PM", "17.00").
+    static func clockTime(_ date: Date) -> String {
+        clockTimeFormatter.string(from: date)
     }
 
     /// Compact `1:23` countdown for beside the icon. Format (not font) fixes
@@ -158,7 +250,7 @@ enum KeepAwakePolicy {
         return "less than a minute"
     }
 
-    private static let untilTimeFormatter: DateFormatter = {
+    private static let clockTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         formatter.dateStyle = .none

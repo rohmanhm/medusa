@@ -49,6 +49,8 @@ enum AppSettings {
         static let keepAwakeHotKeyDisplay = "keepAwakeHotKeyDisplay"
         static let keepAwakeShowCountdown = "keepAwakeShowCountdown"
         static let keepAwakeStartAtLaunch = "keepAwakeStartAtLaunch"
+        /// JSON-encoded `[KeepAwakeSchedule]`. Absent means no Schedules.
+        static let keepAwakeSchedules = "keepAwakeSchedules"
     }
 
     /// Default shortcut: ⌘⇧L (keyCode 37 == "L" on the ANSI layout).
@@ -189,6 +191,10 @@ enum AppSettings {
     static var keepAwakeSoonMinutes: Int { defaults.integer(forKey: Keys.keepAwakeSoonMinutes) }
     static var keepAwakeShowCountdown: Bool { defaults.bool(forKey: Keys.keepAwakeShowCountdown) }
     static var keepAwakeStartAtLaunch: Bool { defaults.bool(forKey: Keys.keepAwakeStartAtLaunch) }
+
+    static var keepAwakeSchedules: [KeepAwakeSchedule] {
+        KeepAwakeSchedule.decodeList(from: defaults.data(forKey: Keys.keepAwakeSchedules))
+    }
 
     static var keepAwakeHotKeyKeyCode: UInt16 { UInt16(clamping: defaults.integer(forKey: Keys.keepAwakeHotKeyKeyCode)) }
 
