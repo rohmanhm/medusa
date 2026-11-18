@@ -152,6 +152,9 @@ final class ShieldController {
         screenSignature = layout
         previous.forEach { $0.orderOut(nil) }
         NSApp.activate(ignoringOtherApps: true)
+        Log.lock.notice(
+            "shield built displays=\(layout.count, privacy: .public) authenticating=\(self.isAuthenticating, privacy: .public)"
+        )
     }
 
     private func makeWindow(for frame: NSRect) -> ShieldWindow {

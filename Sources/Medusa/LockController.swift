@@ -94,6 +94,7 @@ final class LockController {
     func lock(forceKeepAwake: Bool = false) {
         guard !isLocked else { return }
         guard permissionsGranted() else {
+            Log.lock.notice("lock refused: permissions missing")
             onLockFailed?()
             return
         }
@@ -105,6 +106,7 @@ final class LockController {
         guard tap.start() else {
             // Fail open: never trap the user behind a non-blocking shield.
             shield.hide()
+            Log.lock.error("lock refused: event tap would not start")
             onLockFailed?()
             return
         }
@@ -118,6 +120,7 @@ final class LockController {
         isLocked = true
         startBackstop()
         startSessionObservers()
+        Log.lock.notice("locked forceKeepAwake=\(forceKeepAwake, privacy: .public)")
         onStateChange?()
     }
 
@@ -161,6 +164,7 @@ final class LockController {
         // coreauthd's dialog after a cancel — the exact wedge that trapped the
         // machine. Activating first makes the retry dialog actually appear.
         NSApp.activate(ignoringOtherApps: true)
+        Log.lock.notice("auth dialog requested")
 
         auth.authenticate(reason: "unlock your Mac") { [weak self] outcome in
             guard let self, self.isLocked else { return }
@@ -171,9 +175,12 @@ final class LockController {
             }
             let (reaction, nextWedge) = Self.reaction(for: outcome, priorWedge: self.wedgeCount)
             self.wedgeCount = nextWedge
+            Log.lock.notice(
+                "auth outcome=\(String(describing: outcome), privacy: .public) reaction=\(String(describing: reaction), privacy: .public) wedge=\(nextWedge, privacy: .public)"
+            )
             switch reaction {
             case .unlock, .unlockFailOpen:
-                self.unlock()
+                self.unlock(because: "auth \(reaction)")
 
             case .rearmAndStayLocked:
                 // Normal: the user backed out or a fingerprint missed. Stay
@@ -214,7 +221,8 @@ final class LockController {
         }
     }
 
-    private func unlock() {
+    private func unlock(because reason: String) {
+        Log.lock.notice("unlocked: \(reason, privacy: .public)")
         stopBackstop()
         stopSessionObservers()
         auth.reset()
@@ -330,9 +338,14 @@ final class LockController {
             isLocked: isLocked,
             systemScreenLocked: systemScreenLocked
         )
+        if isLocked {
+            Log.lock.notice(
+                "event=\(String(describing: event), privacy: .public) reaction=\(String(describing: reaction), privacy: .public) authInFlight=\(self.auth.isAuthenticating, privacy: .public)"
+            )
+        }
         switch reaction {
         case .release:
-            unlock()
+            unlock(because: "system unlock")
         case .reaffirm:
             reaffirmLock()
         case .cancelAuth:
@@ -408,7 +421,7 @@ final class LockController {
             tap.onInteraction = { [weak self] in self?.beginAuth() }
             if !tap.start() {
                 // Can't block input — fail open rather than pretend.
-                unlock()
+                unlock(because: "event tap would not restart")
                 onLockFailed?()
                 return
             }
@@ -440,7 +453,7 @@ final class LockController {
         // still guarantee the lock can't trap.
         guard duration > 0 else { return }
         let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
-            self?.unlock()
+            self?.unlock(because: "backstop")
         }
         RunLoop.main.add(timer, forMode: .common)
         backstop = timer
