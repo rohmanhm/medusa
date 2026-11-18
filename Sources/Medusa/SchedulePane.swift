@@ -63,8 +63,14 @@ enum ScheduleCopy {
 }
 
 struct SchedulePane: View {
-    @AppStorage(AppSettings.Keys.keepAwakeSchedules) private var stored = Data()
+    @AppStorage private var stored: Data
     @AppStorage(AppSettings.Keys.keepAwakeDefaultLevel) private var defaultLevel = AwakeLevel.display.rawValue
+
+    /// The app edits the real settings. The snapshot runner passes a
+    /// throwaway store so its sample Schedules never reach them.
+    init(store: UserDefaults = .standard) {
+        _stored = AppStorage(wrappedValue: Data(), AppSettings.Keys.keepAwakeSchedules, store: store)
+    }
 
     @State private var pendingRemoval: KeepAwakeSchedule?
 

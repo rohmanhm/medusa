@@ -23,11 +23,17 @@ import AppKit
 /// - `--keepawake-test [seconds]`: exercises the Keep Awake engine headlessly
 ///   (Display hold, System hold, release) with no permissions and no
 ///   notifications. Exit 0 = PASS.
+///
+/// - `--schedule-test [seconds]`: exercises a Schedule headlessly. A window
+///   that is open now holds Display awake for N seconds (default 6, long
+///   enough to read `pmset -g assertions`), then Pause drops the hold, Resume
+///   restores it, and removing the Schedule releases it. Exit 0 = PASS.
 enum SelfTestMode {
     case selfTest
     case lockTest(seconds: TimeInterval)
     case authTest(seconds: TimeInterval)
     case keepAwakeTest(seconds: TimeInterval)
+    case scheduleTest(seconds: TimeInterval)
     case verify(timeout: TimeInterval)
 
     static func from(_ arguments: [String]) -> SelfTestMode? {
@@ -48,6 +54,10 @@ enum SelfTestMode {
         if let index = arguments.firstIndex(of: "--keepawake-test") {
             let seconds = arguments[safe: index + 1].flatMap(TimeInterval.init) ?? 8
             return .keepAwakeTest(seconds: seconds)
+        }
+        if let index = arguments.firstIndex(of: "--schedule-test") {
+            let seconds = arguments[safe: index + 1].flatMap(TimeInterval.init) ?? 6
+            return .scheduleTest(seconds: seconds)
         }
         return nil
     }
@@ -77,6 +87,7 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
         case .lockTest(let seconds): runLockTest(seconds: seconds)
         case .authTest(let seconds): runAuthTest(seconds: seconds)
         case .keepAwakeTest(let seconds): runKeepAwakeTest(seconds: seconds)
+        case .scheduleTest(let seconds): runScheduleTest(seconds: seconds)
         case .verify(let timeout): runVerify(timeout: timeout)
         }
     }
@@ -255,6 +266,40 @@ final class SelfTestRunner: NSObject, NSApplicationDelegate {
         authTestController = controller
         controller.lock()
         log("LOCKED — touch the keyboard or click to raise the unlock dialog.")
+    }
+
+    /// Exercises a Schedule through the real engine and a real assertion. The
+    /// Schedule lives in this run only: nothing is read from or written to the
+    /// stored settings.
+    private func runScheduleTest(seconds: TimeInterval) {
+        var schedules = [
+            KeepAwakeSchedule(weekdays: Set(1...7), startMinute: 0, endMinute: 0, level: .display)
+        ]
+        let engine = KeepAwakeController(schedules: { schedules })
+        log("Medusa schedule-test: an all-day Schedule, held for \(Int(seconds))s (pid \(ProcessInfo.processInfo.processIdentifier)).")
+        engine.refresh()
+        let holds = engine.effectiveLevel == .display
+        log("Open window holds Display awake: \(mark(holds)) (header: \(engine.headerText() ?? "-"))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [self] in
+            engine.pauseSchedule()
+            let paused = engine.effectiveLevel == nil
+            log("Pause drops the hold:           \(mark(paused))")
+            engine.resumeSchedule()
+            let resumed = engine.effectiveLevel == .display
+            log("Resume restores it:             \(mark(resumed))")
+            schedules = []
+            engine.refresh()
+            let released = engine.effectiveLevel == nil
+            log("No Schedule, no hold:           \(mark(released))")
+            log("----------------")
+            if holds && paused && resumed && released {
+                log("RESULT: PASS — the Schedule hold follows its window.")
+                exit(0)
+            } else {
+                log("RESULT: FAIL — the Schedule hold did not follow its window.")
+                exit(3)
+            }
+        }
     }
 
     /// Exercises the Keep Awake engine headlessly: a real Display-awake Session

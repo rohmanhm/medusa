@@ -328,22 +328,22 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
     }
 
     /// The Schedule tab twice: with no Schedules, then with two. The sample
-    /// Schedules go to this unbundled binary's own defaults domain and are
-    /// removed again, so no real settings are touched.
+    /// Schedules live in a throwaway defaults suite, never in the settings
+    /// of whichever build runs this.
     private func captureSchedulePane() {
-        let defaults = UserDefaults.standard
-        let key = AppSettings.Keys.keepAwakeSchedules
-        defaults.removeObject(forKey: key)
-        capturePane(SchedulePane(), as: .schedule, name: "pane-schedule-empty") { [self] in
-            defaults.set(
+        let suite = "org.medusa.Medusa.snapshot"
+        guard let store = UserDefaults(suiteName: suite) else { exit(9) }
+        store.removePersistentDomain(forName: suite)
+        capturePane(SchedulePane(store: store), as: .schedule, name: "pane-schedule-empty") { [self] in
+            store.set(
                 KeepAwakeSchedule.encodeList([
                     KeepAwakeSchedule(weekdays: [2, 3, 4, 5, 6], startMinute: 7 * 60, endMinute: 19 * 60, level: .display),
                     KeepAwakeSchedule(isEnabled: false, weekdays: [6, 7], startMinute: 22 * 60, endMinute: 6 * 60, level: .system)
                 ]),
-                forKey: key
+                forKey: AppSettings.Keys.keepAwakeSchedules
             )
-            capturePane(SchedulePane(), as: .schedule, name: "pane-schedule") {
-                defaults.removeObject(forKey: key)
+            capturePane(SchedulePane(store: store), as: .schedule, name: "pane-schedule") {
+                store.removePersistentDomain(forName: suite)
                 exit(0)
             }
         }
