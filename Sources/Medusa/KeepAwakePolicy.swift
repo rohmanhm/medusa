@@ -3,7 +3,7 @@ import Foundation
 /// How much of the Mac a Hold keeps on. Display awake keeps the screen lit
 /// and the system running; System awake lets the screen sleep but keeps the
 /// system running. The strongest level among live Holds wins.
-enum AwakeLevel: String {
+enum AwakeLevel: String, Codable {
     case display
     case system
 
