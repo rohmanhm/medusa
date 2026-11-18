@@ -2,8 +2,8 @@ import AppKit
 import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    private let lock = LockController()
-    private let keepAwake = KeepAwakeController()
+    private let keepAwake: KeepAwakeController
+    private let lock: LockController
     private let menuBar = MenuBarController()
     private let hotKey = HotKey()
     private let keepAwakeHotKey = HotKey(
@@ -14,11 +14,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var settings: SettingsWindowController?
     private var updater: UpdaterController?
 
+    override init() {
+        let keepAwake = KeepAwakeController()
+        self.keepAwake = keepAwake
+        lock = LockController(keepAwake: keepAwake)
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.registerDefaults()
         KeepAwakeNotifier.registerCategories(delegate: self)
 
-        lock.keepAwakeEngine = keepAwake
         keepAwake.isLocked = { [weak lock] in lock?.isLocked ?? false }
 
         let updater = UpdaterController(isLocked: { [weak lock] in lock?.isLocked ?? false })

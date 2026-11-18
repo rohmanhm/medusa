@@ -13,9 +13,11 @@ import AppKit
 final class LockController {
     private let tap: InputBlocker
     private let shield: ShieldController
-    private let power = PowerAssertion()
     private let auth: Authenticator
     private let permissionsGranted: () -> Bool
+    /// The shared Keep Awake engine. The Lock places a Lock hold on it while
+    /// engaged and never owns a power assertion itself (ADR-0001).
+    private let keepAwake: KeepAwakeController
 
     /// Absolute backstop. However badly the unlock path misbehaves, the lock
     /// releases itself after this long. Under normal use Touch ID lifts the lock
@@ -45,12 +47,6 @@ final class LockController {
     /// system unlock releases Medusa entirely (the power-button trap fix).
     private var systemScreenLocked = false
 
-    /// When wired (the running app), the Lock places a Lock hold on the shared
-    /// Keep Awake engine instead of owning the power assertion itself — one
-    /// engine, many Holds. Nil in headless harnesses, which keep the legacy
-    /// direct assertion path byte-for-byte.
-    var keepAwakeEngine: KeepAwakeController?
-
     private(set) var isLocked = false
 
     /// Notifies observers (the menu bar) that lock state changed.
@@ -77,13 +73,15 @@ final class LockController {
         tap: InputBlocker = InputTap(),
         shield: ShieldController = ShieldController(),
         auth: Authenticator = Authenticator(),
-        permissionsGranted: @escaping () -> Bool = { Permissions.allGranted }
+        permissionsGranted: @escaping () -> Bool = { Permissions.allGranted },
+        keepAwake: KeepAwakeController = KeepAwakeController()
     ) {
         self.maxLockDurationOverride = maxLockDuration
         self.tap = tap
         self.shield = shield
         self.auth = auth
         self.permissionsGranted = permissionsGranted
+        self.keepAwake = keepAwake
     }
 
     func toggle() {
@@ -107,7 +105,6 @@ final class LockController {
         guard tap.start() else {
             // Fail open: never trap the user behind a non-blocking shield.
             shield.hide()
-            power.end()
             onLockFailed?()
             return
         }
@@ -120,11 +117,7 @@ final class LockController {
             forceKeepAwake: forceKeepAwakeThisLock,
             keepAwakeSetting: AppSettings.keepAwake
         ) {
-            if let engine = keepAwakeEngine {
-                reportKeepAwakeFailureIfNeeded(held: engine.setLockHold(true))
-            } else {
-                reportKeepAwakeFailureIfNeeded(held: power.begin())
-            }
+            reportKeepAwakeFailureIfNeeded(held: keepAwake.setLockHold(true))
         }
 
         isLocked = true
@@ -232,8 +225,7 @@ final class LockController {
         auth.reset()
         tap.stop()
         shield.hide()
-        keepAwakeEngine?.setLockHold(false)
-        power.end()
+        keepAwake.setLockHold(false)
         wedgeCount = 0
         keepAwakeWarned = false
         forceKeepAwakeThisLock = false
@@ -401,11 +393,7 @@ final class LockController {
             forceKeepAwake: forceKeepAwakeThisLock,
             keepAwakeSetting: AppSettings.keepAwake
         ) {
-            if let engine = keepAwakeEngine {
-                reportKeepAwakeFailureIfNeeded(held: engine.reaffirmLockHold())
-            } else {
-                reportKeepAwakeFailureIfNeeded(held: power.reaffirm())
-            }
+            reportKeepAwakeFailureIfNeeded(held: keepAwake.reaffirmLockHold())
         }
         // After a yield the tap is fully stopped and shields are gone. A normal
         // reaffirm (display sleep without system lock) only needs ensureEnabled /

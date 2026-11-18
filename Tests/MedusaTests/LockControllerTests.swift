@@ -51,6 +51,7 @@ final class LockControllerTests: XCTestCase {
     private var tap: FakeInputBlocker!
     private var dialog: FakeAuthDialog!
     private var shield: ShieldController!
+    private var keepAwake: KeepAwakeController!
     private var lock: LockController!
 
     override func setUp() {
@@ -58,11 +59,13 @@ final class LockControllerTests: XCTestCase {
         tap = FakeInputBlocker()
         dialog = FakeAuthDialog()
         shield = ShieldController(frames: { [NSRect(x: -30_000, y: -30_000, width: 40, height: 30)] })
+        keepAwake = KeepAwakeController()
         lock = LockController(
             tap: tap,
             shield: shield,
             auth: Authenticator(evaluate: dialog.evaluate),
-            permissionsGranted: { true }
+            permissionsGranted: { true },
+            keepAwake: keepAwake
         )
     }
 
@@ -180,5 +183,26 @@ final class LockControllerTests: XCTestCase {
         XCTAssertFalse(lock.isLocked)
         XCTAssertFalse(shield.isShown)
         XCTAssertEqual(failures, 1)
+    }
+
+    func testALockThatKeepsTheMacAwakeHoldsTheDisplayOnAndLetsGoOnUnlock() {
+        lock.lock(forceKeepAwake: true)
+        XCTAssertEqual(keepAwake.effectiveLevel, .display)
+
+        tap.cue()
+        dialog.answer(success: true)
+        spin()
+
+        XCTAssertNil(keepAwake.effectiveLevel)
+    }
+
+    func testTheLockLetsTheDisplaySleepWhileTheSystemLockScreenIsUp() {
+        lock.lock(forceKeepAwake: true)
+
+        lock.handleSessionEvent(.systemScreenDidLock)
+        XCTAssertEqual(keepAwake.effectiveLevel, .system)
+
+        lock.handleSessionEvent(.systemScreenDidUnlock)
+        XCTAssertNil(keepAwake.effectiveLevel)
     }
 }
