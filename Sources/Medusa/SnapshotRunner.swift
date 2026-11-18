@@ -21,6 +21,7 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         case shield
         case lockPane
         case keepAwakePane
+        case schedulePane
         case motionProbe(seconds: TimeInterval)
     }
 
@@ -51,9 +52,11 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         case .shield:
             captureShield()
         case .lockPane:
-            captureLockPane()
+            capturePane(LockScreenPane(), as: .lockScreen, name: "pane-lock-screen") { exit(0) }
         case .keepAwakePane:
-            captureKeepAwakePane()
+            capturePane(KeepAwakePane(), as: .keepAwake, name: "pane-keep-awake") { exit(0) }
+        case .schedulePane:
+            captureSchedulePane()
         case .motionProbe(let seconds):
             runMotionProbe(seconds: seconds)
         }
@@ -297,45 +300,52 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         exit(0)
     }
 
-    /// Hosts `LockScreenPane` directly in an off-screen borderless window —
-    /// the same trick `captureShield` uses — so the pane's real SwiftUI render
-    /// can be verified even while the full settings window can't launch
-    /// headlessly.
-    private func captureLockPane() {
-        let size = NSSize(width: 590, height: 780)
+    /// Hosts one Settings pane directly in an off-screen borderless window, at
+    /// its tab's size — the same trick `captureShield` uses — so the pane's
+    /// real SwiftUI render can be verified even while the full settings window
+    /// can't launch headlessly.
+    private func capturePane<Pane: View>(
+        _ pane: Pane,
+        as tab: SettingsWindowController.Tab,
+        name: String,
+        then next: @escaping () -> Void
+    ) {
         let window = NSWindow(
-            contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: size),
+            contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: tab.size),
             styleMask: .borderless,
             backing: .buffered,
             defer: false
         )
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: LockScreenPane())
+        window.contentView = NSHostingView(rootView: pane)
         window.orderFront(nil)
         shieldWindow = window
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [self] in
-            snap(window: window, name: "pane-lock-screen")
-            exit(0)
+            snap(window: window, name: name)
+            window.orderOut(nil)
+            next()
         }
     }
 
-    /// Same trick for the Keep Awake tab — the full settings window can't
-    /// launch headlessly, but the pane hosted directly can.
-    private func captureKeepAwakePane() {
-        let size = NSSize(width: 590, height: 760)
-        let window = NSWindow(
-            contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: size),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: KeepAwakePane())
-        window.orderFront(nil)
-        shieldWindow = window
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [self] in
-            snap(window: window, name: "pane-keep-awake")
-            exit(0)
+    /// The Schedule tab twice: with no Schedules, then with two. The sample
+    /// Schedules go to this unbundled binary's own defaults domain and are
+    /// removed again, so no real settings are touched.
+    private func captureSchedulePane() {
+        let defaults = UserDefaults.standard
+        let key = AppSettings.Keys.keepAwakeSchedules
+        defaults.removeObject(forKey: key)
+        capturePane(SchedulePane(), as: .schedule, name: "pane-schedule-empty") { [self] in
+            defaults.set(
+                KeepAwakeSchedule.encodeList([
+                    KeepAwakeSchedule(weekdays: [2, 3, 4, 5, 6], startMinute: 7 * 60, endMinute: 19 * 60, level: .display),
+                    KeepAwakeSchedule(isEnabled: false, weekdays: [6, 7], startMinute: 22 * 60, endMinute: 6 * 60, level: .system)
+                ]),
+                forKey: key
+            )
+            capturePane(SchedulePane(), as: .schedule, name: "pane-schedule") {
+                defaults.removeObject(forKey: key)
+                exit(0)
+            }
         }
     }
 

@@ -499,7 +499,8 @@ struct KeepAwakePane: View {
             } footer: {
                 Text("On battery, Sessions end at the threshold or when macOS reports its Final "
                     + "warning — whichever lands first. A dead laptop is worse than a sleeping one. "
-                    + "Never fires on AC. Covers Sessions only, not the Lock hold.")
+                    + "Schedules wait at the same threshold and come back when power returns. "
+                    + "Never fires on AC. Does not cover the Lock hold.")
             }
 
             Section {

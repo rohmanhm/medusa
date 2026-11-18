@@ -10,6 +10,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         case general
         case lockScreen
         case keepAwake
+        case schedule
         case permissions
 
         var label: String {
@@ -17,6 +18,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .general: return "General"
             case .lockScreen: return "Lock Screen"
             case .keepAwake: return "Keep Awake"
+            case .schedule: return "Schedule"
             case .permissions: return "Permissions"
             }
         }
@@ -26,6 +28,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .general: return "gearshape"
             case .lockScreen: return "lock.display"
             case .keepAwake: return "cup.and.saucer"
+            case .schedule: return "calendar.badge.clock"
             case .permissions: return "checkmark.shield"
             }
         }
@@ -41,6 +44,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .general: return NSSize(width: 590, height: 720)
             case .lockScreen: return NSSize(width: 590, height: 780)
             case .keepAwake: return NSSize(width: 590, height: 760)
+            case .schedule: return NSSize(width: 590, height: 720)
             case .permissions: return NSSize(width: 590, height: 370)
             }
         }
@@ -50,6 +54,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             case .general: GeneralPane(updater: updater)
             case .lockScreen: LockScreenPane()
             case .keepAwake: KeepAwakePane()
+            case .schedule: SchedulePane()
             case .permissions: PermissionsPane()
             }
         }

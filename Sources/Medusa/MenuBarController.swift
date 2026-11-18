@@ -25,6 +25,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onStartSession: ((KeepAwakeEndCondition, AwakeLevel) -> Void)?
     var onExtendSession: ((Int) -> Void)?
     var onStopSession: (() -> Void)?
+    var onPauseSchedule: (() -> Void)?
+    var onResumeSchedule: (() -> Void)?
+    var onSchedules: (() -> Void)?
 
     private var lastCountdown: String?
 
@@ -178,28 +181,46 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let locked = isLocked?() ?? false
 
         if let header = engine.headerText() {
-            let headerItem = NSMenuItem(title: header, action: nil, keyEquivalent: "")
-            headerItem.isEnabled = false
-            keepAwakeMenu.addItem(headerItem)
+            addNote(header)
+        }
 
-            let extendMenu = NSMenu()
-            for minutes in [15, 30, 60] {
-                let item = NSMenuItem(
-                    title: minutes >= 60 ? "1 hour" : "\(minutes) min",
-                    action: #selector(extendTapped(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = minutes
-                extendMenu.addItem(item)
+        if let session = engine.session {
+            // An indefinite Session has no end to push.
+            if session.deadline != nil {
+                let extendMenu = NSMenu()
+                for minutes in [15, 30, 60] {
+                    let item = NSMenuItem(
+                        title: minutes >= 60 ? "1 hour" : "\(minutes) min",
+                        action: #selector(extendTapped(_:)),
+                        keyEquivalent: ""
+                    )
+                    item.target = self
+                    item.representedObject = minutes
+                    extendMenu.addItem(item)
+                }
+                let extendItem = NSMenuItem(title: "Extend", action: nil, keyEquivalent: "")
+                extendItem.submenu = extendMenu
+                keepAwakeMenu.addItem(extendItem)
             }
-            let extendItem = NSMenuItem(title: "Extend", action: nil, keyEquivalent: "")
-            extendItem.submenu = extendMenu
-            keepAwakeMenu.addItem(extendItem)
+            addAction("Stop Keep Awake", #selector(stopTapped))
+        }
 
-            let stopItem = NSMenuItem(title: "Stop Keep Awake", action: #selector(stopTapped), keyEquivalent: "")
-            stopItem.target = self
-            keepAwakeMenu.addItem(stopItem)
+        if let note = KeepAwakePolicy.scheduleNote(engine.scheduleStatus) {
+            addNote(note)
+        }
+        switch engine.scheduleStatus {
+        case .holding(let window):
+            addAction(
+                "Pause Schedule Until \(KeepAwakePolicy.clockTime(window.end))",
+                #selector(pauseScheduleTapped)
+            )
+        case .paused:
+            addAction("Resume Schedule", #selector(resumeScheduleTapped))
+        case .idle, .batteryLow:
+            break
+        }
+
+        if !keepAwakeMenu.items.isEmpty {
             keepAwakeMenu.addItem(.separator())
         }
 
@@ -243,12 +264,31 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             levelItem.target = self
             levelItem.state = AppSettings.keepAwakeDefaultLevel == .system ? .on : .off
             keepAwakeMenu.addItem(levelItem)
+
+            keepAwakeMenu.addItem(.separator())
+            addAction("Schedules…", #selector(schedulesTapped))
         } else if engine.headerText() == nil {
             let item = NSMenuItem(title: "Unavailable while locked", action: nil, keyEquivalent: "")
             item.isEnabled = false
             keepAwakeMenu.addItem(item)
         }
     }
+
+    private func addNote(_ title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        keepAwakeMenu.addItem(item)
+    }
+
+    private func addAction(_ title: String, _ action: Selector) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        keepAwakeMenu.addItem(item)
+    }
+
+    @objc private func pauseScheduleTapped() { onPauseSchedule?() }
+    @objc private func resumeScheduleTapped() { onResumeSchedule?() }
+    @objc private func schedulesTapped() { onSchedules?() }
 
     private static func presetLabel(minutes: Int) -> String {
         if minutes < 60 { return "\(minutes) min" }

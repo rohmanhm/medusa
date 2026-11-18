@@ -77,6 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menuBar.onStopSession = { [weak self] in
             self?.keepAwake.stopSession()
         }
+        menuBar.onPauseSchedule = { [weak self] in self?.keepAwake.pauseSchedule() }
+        menuBar.onResumeSchedule = { [weak self] in self?.keepAwake.resumeSchedule() }
+        menuBar.onSchedules = { [weak self] in self?.showSettings(tab: .schedule) }
         menuBar.onUntilPicked = { [weak self] in self?.pickUntilTime() }
         menuBar.onCustomPicked = { [weak self] in self?.pickCustomDuration() }
 

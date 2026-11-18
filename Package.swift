@@ -17,8 +17,14 @@ let package = Package(
             linkerSettings: [
                 // SwiftPM links Sparkle but has no bundle model to embed it;
                 // build-app.sh copies the framework into Contents/Frameworks,
-                // and this rpath is how the executable finds it there.
-                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
+                // and the first rpath is how the executable finds it there.
+                // The second finds the copy SwiftPM stages beside the binary,
+                // for unbundled runs (`.build/debug/Medusa --self-test`): the
+                // Swift 6.4 build system no longer adds that rpath itself.
+                .unsafeFlags([
+                    "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+                    "-Xlinker", "-rpath", "-Xlinker", "@loader_path"
+                ])
             ]
         ),
         .testTarget(
