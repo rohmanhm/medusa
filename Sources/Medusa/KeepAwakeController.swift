@@ -126,13 +126,12 @@ final class KeepAwakeController {
         onStateChange?()
     }
 
-    /// Buy more time on a live Session (menu or notification action).
+    /// Buy more time on a live Session (menu or notification action). An
+    /// indefinite Session has no end to push, so it stays indefinite.
     func extend(minutes: Int) {
-        guard var current = session else { return }
+        guard var current = session, let deadline = current.deadline else { return }
         let now = Date()
-        let base = max(current.deadline ?? now, now)
-        let next = base.addingTimeInterval(TimeInterval(minutes * 60))
-        current.deadline = next
+        current.deadline = max(deadline, now).addingTimeInterval(TimeInterval(minutes * 60))
         if current.untilTime {
             // An extended Until… Session becomes a duration Session ending at
             // the pushed time — the copy stays honest about the real end.
@@ -180,10 +179,6 @@ final class KeepAwakeController {
             lockAlso: lockHold,
             now: now
         )
-    }
-
-    func countdownText(now: Date = Date()) -> String? {
-        KeepAwakePolicy.countdownText(deadline: session?.deadline, now: now)
     }
 
     // MARK: Evaluation

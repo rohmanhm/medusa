@@ -525,8 +525,8 @@ struct KeepAwakePane: View {
             } header: {
                 Text("Menu Bar & Shortcut")
             } footer: {
-                Text("The shortcut ships unassigned and is ignored while locked. Countdown "
-                    + "renders 1:23 beside the icon and ticks on minute boundaries.")
+                Text("The shortcut ships unassigned and is ignored while locked. The countdown "
+                    + "shows the time left in a Session that has an end, beside the icon.")
             }
         }
         .formStyle(.grouped)

@@ -22,17 +22,19 @@ enum KeepAwakeEndCondition: Equatable {
     case duration(TimeInterval)
     case until(Date)
 
-    /// The absolute end time. Durations become deadlines at start; a past
-    /// clock time means tomorrow (the picker only offers future times, this
-    /// is the backstop so a stale date can never end a Session instantly).
-    func deadline(from now: Date = Date()) -> Date? {
+    /// The absolute end time. Durations become deadlines at start. `until`
+    /// carries a clock time: only its hour and minute count, and the deadline
+    /// is the next time the clock reads that, so a picker that kept
+    /// tomorrow's date still ends tonight and a past time means tomorrow.
+    func deadline(from now: Date = Date(), calendar: Calendar = .current) -> Date? {
         switch self {
         case .indefinitely:
             return nil
         case .duration(let interval):
             return now.addingTimeInterval(max(1, interval))
         case .until(let date):
-            return date > now ? date : date.addingTimeInterval(24 * 3600)
+            let clockTime = calendar.dateComponents([.hour, .minute], from: date)
+            return calendar.nextDate(after: now, matching: clockTime, matchingPolicy: .nextTime)
         }
     }
 
@@ -141,6 +143,12 @@ enum KeepAwakePolicy {
             return String(format: "%d:%02d:%02d", hours, minutes, seconds)
         }
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    /// The text beside the status icon: the countdown of a finite Session
+    /// when the user turned it on, nothing otherwise.
+    static func barCountdown(enabled: Bool, deadline: Date?, now: Date) -> String? {
+        enabled ? countdownText(deadline: deadline, now: now) : nil
     }
 
     private static func verboseRemaining(_ remaining: TimeInterval) -> String {

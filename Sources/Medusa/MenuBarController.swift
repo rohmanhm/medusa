@@ -103,24 +103,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     /// Lightweight per-tick path — only writes when the text changed.
     func refreshCountdown() {
-        guard AppSettings.keepAwakeShowCountdown,
-              let text = keepAwake?.countdownText(),
-              !(keepAwake.map { $0.hasSession } ?? true)
-        else {
-            // Countdown off, or indefinite / no Session: no bar text.
-            if lastCountdown != nil {
-                statusItem.button?.title = ""
-                lastCountdown = nil
-            }
-            return
+        let text = KeepAwakePolicy.barCountdown(
+            enabled: AppSettings.keepAwakeShowCountdown,
+            deadline: keepAwake?.session?.deadline,
+            now: Date()
+        )
+        guard text != lastCountdown else { return }
+        statusItem.button?.title = text ?? ""
+        if text != nil {
+            statusItem.button?.imagePosition = .imageLeading
         }
-        if text != lastCountdown {
-            statusItem.button?.title = text
-            if let button = statusItem.button {
-                button.imagePosition = .imageLeading
-            }
-            lastCountdown = text
-        }
+        lastCountdown = text
     }
 
     /// Adds "Check for Updates…" below About. Targeting the Sparkle controller

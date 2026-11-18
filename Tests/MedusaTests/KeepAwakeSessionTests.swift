@@ -44,4 +44,19 @@ final class KeepAwakeSessionTests: XCTestCase {
 
         XCTAssertEqual(deadline, try date(day: 19, hour: 9, minute: 0))
     }
+
+    func testBarCountdownShowsTheTimeLeftOfAFiniteSession() throws {
+        let now = try date(day: 18, hour: 9, minute: 0)
+
+        let text = KeepAwakePolicy.barCountdown(enabled: true, deadline: now.addingTimeInterval(3723), now: now)
+
+        XCTAssertEqual(text, "1:02:03")
+    }
+
+    func testBarCountdownIsEmptyWhenTurnedOffOrIndefinite() throws {
+        let now = try date(day: 18, hour: 9, minute: 0)
+
+        XCTAssertNil(KeepAwakePolicy.barCountdown(enabled: false, deadline: now.addingTimeInterval(60), now: now))
+        XCTAssertNil(KeepAwakePolicy.barCountdown(enabled: true, deadline: nil, now: now))
+    }
 }
