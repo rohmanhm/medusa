@@ -53,7 +53,14 @@ A Hold the user starts deliberately, carrying an End condition and an Awake leve
 _Avoid_: timer, countdown, caffeinate run
 
 **Lock hold**:
-The Hold a Lock places while engaged: by the user's setting for manual locks, always for a Preempt lock.
+The Hold a Lock places while engaged: by the user's setting for manual locks, always for a Preempt lock. It is Display awake while the Shield is up and System awake while Medusa has Yielded.
+
+**Schedule**:
+A weekly window (the days it starts on, a start and an end clock time, an Awake level) during which Medusa keeps the Mac awake on its own. A Schedule is a statement about the clock, not an event: it holds whenever the current time is inside its window.
+_Avoid_: trigger, automation, timer, rule
+
+**Schedule hold**:
+The Hold an open Schedule window places. The user can Pause it for the rest of that window, and the Battery guard keeps it off on low battery.
 
 **End condition**:
 What terminates a Session: indefinitely, for a duration, or until a clock time.
@@ -73,5 +80,5 @@ The End condition used when a Session starts without one being chosen: by Quick 
 Starting (or stopping) a Session with the Default duration from a single gesture, without opening the menu.
 
 **Battery guard**:
-Ending Sessions when the battery drops below a threshold while unplugged.
+Ending Sessions, and keeping Schedule holds off, when the battery drops below a threshold while unplugged.
 _Avoid_: low-battery cutoff

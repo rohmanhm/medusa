@@ -53,6 +53,13 @@ login password.
   customizable in Settings → Keep Awake. (No lid-closed mode and no
   while-process-runs End condition yet — idle assertions can't prevent forced
   sleep, and process detection is the next effort.)
+- **Schedules** — set the hours your Mac should stay awake on its own, by day
+  of the week: weekdays 7:00 to 19:00 with the screen on, say, and Friday
+  night until Saturday morning with only the system awake. A Schedule follows
+  the clock, so it is on as soon as Medusa runs inside those hours, including
+  after a restart or a wake. Pause one for the rest of its hours from the
+  menu. The Battery guard covers Schedules. Set them up in Settings →
+  Schedule.
 - **OLED-friendly** — the lock display wanders to a new spot every couple of
   minutes (or drifts gently, your pick) and dims to half brightness after a few
   idle minutes, so hours under the shield never park static pixels on your
@@ -169,6 +176,32 @@ the safe end-to-end proof of the actual input block — it always releases itsel
 so it can't trap the machine. `--auth-test` is the safe way to prove the *unlock*
 path: raise the real dialog, cancel it, confirm it comes back, and trust the
 backstop to release you if anything wedges.
+
+Two more modes run headlessly, with no permissions and nothing on screen:
+
+```bash
+# Keep Awake engine — holds Display awake, then System awake, then releases.
+build/Medusa.app/Contents/MacOS/Medusa --keepawake-test 4
+
+# Schedule — an all-day Schedule holds for N seconds (read it in
+# `pmset -g assertions`), then Pause, Resume, and removal are checked.
+build/Medusa.app/Contents/MacOS/Medusa --schedule-test 6
+```
+
+`swift test` runs the unit tests. They drive the real lock controller, the
+real overlay windows (placed off every display), and real power assertions,
+with only the event tap, the Touch ID dialog, and the clock replaced.
+
+### Reading what happened
+
+Medusa writes every lock, unlock attempt, wake or sleep event, and keep-awake
+change to the unified log. When an unlock misbehaves, read the last hour back:
+
+```bash
+log show --last 1h --predicate 'subsystem == "org.medusa.Medusa"'
+```
+
+Local builds log under `org.medusa.Medusa.local`.
 
 ## Escape hatches
 
