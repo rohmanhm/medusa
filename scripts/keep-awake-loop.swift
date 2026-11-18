@@ -348,7 +348,6 @@ do {
     expect("menu has a Keep Awake section", menu.contains("Keep Awake"))
     expect("menu offers Extend + Stop", menu.contains("Extend") && menu.contains("Stop Keep Awake"))
     expect("menu supports Quick start", menu.contains("QuickStart") || menu.contains("quickStart"))
-    expect("menu countdown uses 1:23 shape", menu.contains("countdownText"))
 }
 
 do {

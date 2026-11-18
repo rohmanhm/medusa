@@ -1,6 +1,17 @@
 import AppKit
 import CoreGraphics
 
+/// What the lock needs from whatever swallows input: a real `CGEventTap` in
+/// the app, a stand-in where the lock lifecycle is driven without TCC grants.
+protocol InputBlocker: AnyObject {
+    var onInteraction: (() -> Void)? { get set }
+    var isActive: Bool { get }
+    func start() -> Bool
+    func stop()
+    func rearm()
+    func ensureEnabled()
+}
+
 /// Owns the system-wide `CGEventTap` that swallows keyboard and scroll input
 /// while Medusa is locked.
 ///
@@ -25,7 +36,7 @@ import CoreGraphics
 ///   storm doesn't enqueue hundreds of identical hops.
 /// - If the tap can't be created (missing permission), the caller must fail
 ///   open — never trap the user behind a shield that isn't actually blocking.
-final class InputTap {
+final class InputTap: InputBlocker {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var watchdog: Timer?

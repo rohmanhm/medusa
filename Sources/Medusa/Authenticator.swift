@@ -30,45 +30,57 @@ enum AuthOutcome {
 /// long-standing, DTS-confirmed quirk). We just evaluate and react to the
 /// result.
 final class Authenticator {
+    /// Starts one system evaluation and returns the call that cancels it. The
+    /// reply may arrive on any thread. Injected so the lock lifecycle can be
+    /// driven without a finger on the sensor.
+    typealias Evaluate = (_ reason: String, _ reply: @escaping (Bool, Error?) -> Void) -> () -> Void
+
     private(set) var isAuthenticating = false
-    /// Retained so `reset()` can invalidate an in-flight evaluation (sleep mid-
-    /// dialog, system lock takeover). Without this, a lost completion leaves
-    /// `isAuthenticating == true` forever and every subsequent unlock cue is a
-    /// silent no-op — the cancel-then-stuck trap.
-    private var activeContext: LAContext?
+
+    private let evaluate: Evaluate
+    /// Counts attempts so a reply that outlives `reset()` can't be mistaken
+    /// for the answer to a newer dialog.
+    private var attempt = 0
+    /// Cancels the in-flight evaluation (sleep mid-dialog, system lock
+    /// takeover). Without it, a lost reply leaves `isAuthenticating == true`
+    /// forever and every later unlock cue is a silent no-op.
+    private var cancelInFlight: (() -> Void)?
+
+    init(evaluate: @escaping Evaluate = Authenticator.systemDialog) {
+        self.evaluate = evaluate
+    }
+
+    static let systemDialog: Evaluate = { reason, reply in
+        let context = LAContext()
+        context.localizedFallbackTitle = "Enter Password"
+        context.localizedCancelTitle = "Cancel"
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason, reply: reply)
+        return { context.invalidate() }
+    }
 
     func authenticate(reason: String, completion: @escaping (AuthOutcome) -> Void) {
         guard !isAuthenticating else { return }
         isAuthenticating = true
+        attempt += 1
+        let current = attempt
 
-        let context = LAContext()
-        context.localizedFallbackTitle = "Enter Password"
-        context.localizedCancelTitle = "Cancel"
-        activeContext = context
-
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { [weak self] success, error in
+        cancelInFlight = evaluate(reason) { [weak self] success, error in
             DispatchQueue.main.async {
-                guard let self else { return }
-                // A reset() may have already cleared this evaluation. Drop the
-                // stale completion so it can't fight a newer attempt.
-                guard self.activeContext === context else { return }
-                self.activeContext = nil
+                guard let self, self.isAuthenticating, self.attempt == current else { return }
+                self.cancelInFlight = nil
                 self.isAuthenticating = false
                 completion(LockPolicy.classify(success: success, error: error))
             }
         }
     }
 
-    /// Abort any in-flight evaluation and clear the busy flag. Called when a
-    /// session reaffirm or system-lock takeover means the current dialog is no
-    /// longer reachable — without this, the next touch is swallowed by
-    /// `guard !isAuthenticating`.
+    /// Abort any in-flight evaluation and clear the busy flag. Called when the
+    /// current dialog can no longer be reached. The cancelled evaluation still
+    /// replies eventually, and that reply is dropped above.
     func reset() {
-        let context = activeContext
-        activeContext = nil
+        let cancel = cancelInFlight
+        cancelInFlight = nil
         isAuthenticating = false
-        // invalidate() cancels evaluatePolicy and (eventually) fires its reply;
-        // we already nil'd activeContext so that reply is ignored above.
-        context?.invalidate()
+        cancel?()
     }
 }

@@ -11,10 +11,11 @@ import AppKit
 ///   release, and the backstop timer are layered so that "force-shutdown" is
 ///   never the only way out — without handing a bystander a cheap unlock.
 final class LockController {
-    private let tap = InputTap()
-    private let shield = ShieldController()
+    private let tap: InputBlocker
+    private let shield: ShieldController
     private let power = PowerAssertion()
-    private let auth = Authenticator()
+    private let auth: Authenticator
+    private let permissionsGranted: () -> Bool
 
     /// Absolute backstop. However badly the unlock path misbehaves, the lock
     /// releases itself after this long. Under normal use Touch ID lifts the lock
@@ -68,8 +69,21 @@ final class LockController {
     ///   omits it (each lock reads the configurable setting, default 4 hours);
     ///   the `--auth-test` harness passes a few seconds so the lock can never
     ///   trap the tester.
-    init(maxLockDuration: TimeInterval? = nil) {
+    ///
+    /// The other parameters are the system boundaries (event tap, overlay
+    /// windows, LocalAuthentication, TCC). The app takes the defaults.
+    init(
+        maxLockDuration: TimeInterval? = nil,
+        tap: InputBlocker = InputTap(),
+        shield: ShieldController = ShieldController(),
+        auth: Authenticator = Authenticator(),
+        permissionsGranted: @escaping () -> Bool = { Permissions.allGranted }
+    ) {
         self.maxLockDurationOverride = maxLockDuration
+        self.tap = tap
+        self.shield = shield
+        self.auth = auth
+        self.permissionsGranted = permissionsGranted
     }
 
     func toggle() {
@@ -80,8 +94,9 @@ final class LockController {
     /// forgetful auto-locks always hold the power assertion; manual paths leave
     /// it false and honor the Keep Awake toggle.
     func lock(forceKeepAwake: Bool = false) {
-        guard !isLocked, Permissions.allGranted else {
-            if !Permissions.allGranted { onLockFailed?() }
+        guard !isLocked else { return }
+        guard permissionsGranted() else {
+            onLockFailed?()
             return
         }
 
@@ -289,7 +304,7 @@ final class LockController {
         DispatchQueue.main.async { [weak self] in self?.handleSessionEvent(.systemScreenDidUnlock) }
     }
 
-    private func handleSessionEvent(_ event: LockPolicy.SessionEvent) {
+    func handleSessionEvent(_ event: LockPolicy.SessionEvent) {
         // Latch the system-lock flag before consulting policy so a wake that
         // races with screenIsLocked sees the right state.
         switch event {
