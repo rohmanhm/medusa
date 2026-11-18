@@ -36,6 +36,11 @@ final class ShieldController {
     private var windows: [ShieldWindow] = []
     private(set) var isShown = false
 
+    /// True while the system auth dialog is up. Overlays read their level from
+    /// this, so one built mid-dialog (display hot-plug, a TV renegotiating
+    /// HDMI) lands under the dialog like the rest instead of on top of it.
+    private var isAuthenticating = false
+
     /// The display layout to cover, one frame per display. Injected so the
     /// rebuild path can be driven without real screens.
     private let frames: () -> [NSRect]
@@ -53,11 +58,10 @@ final class ShieldController {
     private var screenSignature: [NSRect] = []
     private var rebuildDebounce: Timer?
 
-    private var lockedLevel: NSWindow.Level {
-        NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
-    }
-    private var authLevel: NSWindow.Level {
-        NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)))
+    private var level: NSWindow.Level {
+        NSWindow.Level(rawValue: Int(
+            isAuthenticating ? CGWindowLevelForKey(.screenSaverWindow) : CGShieldingWindowLevel()
+        ))
     }
 
     func show() {
@@ -83,6 +87,7 @@ final class ShieldController {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
         screenSignature = []
+        isAuthenticating = false
         isShown = false
     }
 
@@ -92,11 +97,13 @@ final class ShieldController {
     /// so it un-dims the content instantly, and a canceled attempt re-arms the
     /// dim grace timer.
     func setAuthMode(_ authenticating: Bool) {
-        let level = authenticating ? authLevel : lockedLevel
-        for window in windows {
-            window.level = level
-            (window.contentView as? ShieldContentView)?.setAuthMode(authenticating)
-        }
+        isAuthenticating = authenticating
+        windows.forEach(applyAuthMode(to:))
+    }
+
+    private func applyAuthMode(to window: ShieldWindow) {
+        window.level = level
+        (window.contentView as? ShieldContentView)?.setAuthMode(isAuthenticating)
     }
 
     /// Bring the overlays back after sleep/wake or a session switch without
@@ -154,7 +161,6 @@ final class ShieldController {
             backing: .buffered,
             defer: false
         )
-        window.level = lockedLevel
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.backgroundColor = .black
         window.isOpaque = true
@@ -162,6 +168,7 @@ final class ShieldController {
         window.ignoresMouseEvents = false
         window.isReleasedWhenClosed = false
         window.contentView = ShieldContentView(frame: NSRect(origin: .zero, size: frame.size))
+        applyAuthMode(to: window)
         window.setFrame(frame, display: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
