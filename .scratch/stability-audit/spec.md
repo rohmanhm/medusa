@@ -51,7 +51,7 @@ Commit `7c43b93` is the uncommitted work from 2026-09-08, adopted unchanged: it 
 
 ## Open
 
-- [01 Watch a real unlock](issues/01-watch-a-real-unlock.md). The lock fixes have not been seen on a locked screen.
+- [01 Watch a real unlock](issues/01-watch-a-real-unlock.md). A plain lock and Touch ID unlock on the local build passed on 2026-11-19. The two fixed scenarios (a dark display, a display change mid-unlock) have not been seen on a locked screen.
 - [02 Two system cancels in a row unlock the Mac](issues/02-two-system-cancels-fail-open.md).
 - [03 The Backstop counts awake time only](issues/03-backstop-counts-awake-time.md).
 - [04 Other apps keep the display on](issues/04-other-apps-keep-the-display-on.md).
@@ -61,5 +61,5 @@ Commit `7c43b93` is the uncommitted work from 2026-09-08, adopted unchanged: it 
 ## What was not done
 
 - No release. `scripts/release.sh` was not run and `main` was not touched.
-- The lock was never engaged on this Mac during the audit, and the display was never put to sleep.
+- The display was never put to sleep, and the Mac was locked once, for 6 seconds, in the consented run recorded in issue 01.
 - The menu was not looked at on screen. Its strings are tested, its layout is not.

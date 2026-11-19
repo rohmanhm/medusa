@@ -22,3 +22,10 @@ Each command releases itself. Use the build under test, for example `build/Medus
 5. Read the trail: `log show --last 10m --predicate 'subsystem == "org.medusa.Medusa.local" AND category == "lock"'`.
 
 ## Comments
+
+**2026-11-19.** Steps 1 and 2 ran on `build/Medusa Local.app` with the user at the keyboard, minus the cancel in step 2.
+
+- `--self-test`: `RESULT: PASS`, Shield on 3 displays, event tap created and enabled.
+- `--auth-test 40`: locked at 15:41:55.997, `auth dialog requested` at 15:41:58.172 after a key press, `auth outcome=success reaction=unlock` at 15:42:02.153, assertion released.
+
+The real event tap and the real `LAContext` call work after the refactor. Steps 3 and 4 (a dark display, a display change with the dialog up) are the two fixed scenarios and have not been run. The cancel and retry in step 2 has not been run either.
