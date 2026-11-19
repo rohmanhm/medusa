@@ -1,7 +1,7 @@
 # Stability audit, November 2026
 
 Status: ready-for-human
-Branch: `stability-audit-schedule`
+Shipped: v0.4.0 on 2026-11-19 (`main` at `89a6693`, build 49)
 Decision trail: [decisions.tsv](decisions.tsv)
 
 ## What was asked
@@ -50,6 +50,8 @@ The code also has two defects that take the dialog away while Medusa itself stil
 | 10 | Nothing was logged, so a field report could not be replayed. | The Touch ID report above. | `42e916f`. See README, "Reading what happened". |
 | 11 | The unbundled binary could not load Sparkle under the Swift 6.4 build system, so every documented `--self-test` and `--snapshot` command on a debug build died in dyld. | dyld error on the first run. | `72b1c1a`. |
 | 12 | `UNUserNotificationCenter` trapped under `xctest`, which has a bundle identifier but is no app. | Signal 6 on the first test run. | `235baab`. The guard requires an app bundle. |
+| 13 | On macOS 27 every Settings footer was trailing-aligned and three were cut mid-sentence ("…drives Quick start (rig…"). 0.3.1 shows the same. | `--snapshot-settings` render of the real window, once the runner worked. An earlier pass blamed the off-screen snapshot and was wrong. | `83f367b`. |
+| 14 | `--snapshot-settings` hung on every build. `SettingsWindowController()` resolved to the inherited `NSWindowController.init()`, a controller with no window. | "Selected index (0) is outside of the valid bounds (0 - 0)", then no output until killed. 0.3.1 hangs the same way. | `542a24b`. The `updater` parameter has no default now. |
 
 Commit `7c43b93` is the uncommitted work from 2026-09-08, adopted unchanged: it wakes a display that slept on its own under Display awake, and stops the Shield from dropping a TV during an HDMI renegotiation. It has not been watched on the TV in this audit.
 
@@ -62,8 +64,14 @@ Commit `7c43b93` is the uncommitted work from 2026-09-08, adopted unchanged: it 
 - [05 The harness scripts test a copy of the policy](issues/05-harness-scripts-test-a-copy.md).
 - No ticket: the menu-bar countdown counts seconds (`1:02:03`). The Keep Awake spec asked for minutes, updated on the minute. The behavior was left alone and the Settings copy now describes it.
 
+## Release
+
+PRs [#1](https://github.com/rohmanhm/medusa/pull/1) and [#2](https://github.com/rohmanhm/medusa/pull/2) landed on `main` by fast-forward, so every commit cited above resolves there. `scripts/release.sh 0.4.0` built, signed, and notarized the zip and the DMG (both Accepted). The public zip has the same SHA-256 as the local one, the appcast advertises 0.4.0 build 49, and both download URLs answer 200.
+
+Before the release the signed local build was launched as the real app with an all-day Schedule stored. The hold and its `pmset` assertion were up within a second of launch.
+
 ## What was not done
 
-- No release. `scripts/release.sh` was not run and `main` was not touched.
+- No reviewer other than the agent that wrote the code looked at either PR.
 - The display was never put to sleep, and the Mac was locked once, for 6 seconds, in the consented run recorded in issue 01.
 - The menu was not looked at on screen. Its strings are tested, its layout is not.

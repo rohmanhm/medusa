@@ -1,6 +1,7 @@
 # Spec: Keep Awake Schedules
 
 Status: ready-for-human
+Shipped: v0.4.0 on 2026-11-19
 Decision record: [ADR-0002](../../docs/adr/0002-schedules-hold-by-the-clock.md)
 Found by: [stability audit](../stability-audit/spec.md)
 
@@ -42,5 +43,6 @@ A Schedule is a weekly window: the days it starts on, a start time, an end time,
 
 - `swift test`: `SchedulePolicyTests` (windows, overnight, 24 hours, overlap, DST, decoding), `KeepAwakeEngineTests` (hold, release, Pause, Battery guard, composition, kernel timeout, the engine waking itself at a window's start, all read back through `pmset` where a kernel assertion is involved), `KeepAwakePolicyTests`, `ScheduleCopyTests`.
 - `Medusa --schedule-test` on the debug binary and on the signed local bundle: `pmset` showed `PreventUserIdleDisplaySleep "Medusa keep awake (display)"` for the test pid. On the debug run the kernel timeout read 48218 seconds at 10:36, which is midnight plus 60 seconds.
-- `Medusa --snapshot-schedulepane <dir>` renders the tab empty and with two Schedules.
-- Not yet seen: the tab in the real Settings window, the menu items, and the app holding a Schedule across a real sleep and wake.
+- `Medusa --snapshot-schedulepane <dir>` renders the tab empty and with two Schedules, and `--snapshot-settings <dir>` renders it from the real Settings window.
+- The signed local build, launched as the real app with an all-day Schedule stored: `schedule holding(…)` in the log and `PreventUserIdleSystemSleep "Medusa keep awake (system)"` in `pmset` within a second of launch.
+- Not yet seen: the menu items on screen, and the app holding a Schedule across a real sleep and wake.
