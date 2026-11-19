@@ -70,7 +70,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     /// Where the window last sat, so a rebuilt window reopens in place.
     private static var lastTopLeft: NSPoint?
 
-    convenience init(updater: UpdaterController? = nil) {
+    /// `updater` has no default on purpose: `SettingsWindowController()`
+    /// would resolve to the inherited `NSWindowController.init()` and build a
+    /// controller with no window and no tabs.
+    convenience init(updater: UpdaterController?) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 480),
             styleMask: [.titled, .closable, .miniaturizable],

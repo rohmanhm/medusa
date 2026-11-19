@@ -46,7 +46,7 @@ final class SnapshotRunner: NSObject, NSApplicationDelegate {
         AppSettings.registerDefaults()
         switch subject {
         case .settings:
-            let controller = SettingsWindowController()
+            let controller = SettingsWindowController(updater: nil)
             self.controller = controller
             controller.show(tab: .general)
             capture(tabs: Array(SettingsWindowController.Tab.allCases))

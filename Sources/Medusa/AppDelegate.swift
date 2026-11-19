@@ -104,9 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         preempt.start()
 
-        if CommandLine.arguments.contains("--settings") {
-            // Debug/preview entry: open Settings immediately.
-            showSettings()
+        if let index = CommandLine.arguments.firstIndex(of: "--settings") {
+            // Debug/preview entry: open Settings immediately, on the tab named
+            // next ("--settings schedule"), or on General.
+            let name = CommandLine.arguments.dropFirst(index + 1).first?.lowercased()
+            showSettings(tab: SettingsWindowController.Tab.allCases.first {
+                $0.label.lowercased().replacingOccurrences(of: " ", with: "") == name
+            })
         }
 
         // First run (or revoked permissions): walk the user through setup.
