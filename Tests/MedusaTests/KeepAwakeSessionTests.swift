@@ -27,6 +27,19 @@ final class KeepAwakeSessionTests: XCTestCase {
         engine.stopSession()
     }
 
+    func testATimedSessionEndsByItselfAndReleasesTheMac() {
+        var endings: [KeepAwakeEndReason] = []
+        let engine = KeepAwakeController(schedules: { [] })
+        engine.onSessionEnded = { endings.append($0) }
+        engine.startSession(end: .duration(1), level: .system)
+
+        RunLoop.main.run(until: Date().addingTimeInterval(3.4))
+
+        XCTAssertEqual(endings, [.elapsed])
+        XCTAssertNil(engine.session)
+        XCTAssertNil(engine.effectiveLevel)
+    }
+
     func testUntilPickedLateAtNightEndsTheSameNight() throws {
         let halfPastEleven = try date(day: 18, hour: 23, minute: 30)
         let pickerValue = try date(day: 19, hour: 23, minute: 45)
