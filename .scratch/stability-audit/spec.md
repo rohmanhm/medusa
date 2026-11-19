@@ -28,7 +28,11 @@ Each bug was then reproduced in a test that drives the production code before it
 
 Schedules replace that routine. Two other holders kept the display on after Medusa let go: the Dia browser (`NoDisplaySleepAssertion "Capturing"`) and `coreaudiod` (`preventuseridledisplaysleep`, held 118 hours). Medusa cannot release those. See [issue 04](issues/04-other-apps-keep-the-display-on.md).
 
-**Touch ID.** Three days of LocalAuthentication logs hold no Medusa unlock at all, so the report could not be traced in the field. The code has two defects that each remove the dialog, findings 2 and 3 below. Both are reproduced in tests. Whether they are what happened on this Mac is an inference until the unlock is watched on a locked screen. The app now logs the whole unlock path, so the next occurrence can be replayed. See [issue 01](issues/01-watch-a-real-unlock.md).
+**Touch ID.** Three days of LocalAuthentication logs hold no Medusa unlock at all, so the report could not be traced in the field. What the Mac's own settings say is this. `sysadminctl -screenLock status` reads "immediate" and display sleep is 3 minutes. So whenever the displays sleep under a Medusa lock, the macOS lock screen takes over at once and Medusa yields to it, as designed. Medusa's "press any key, then Touch ID" dialog is then not there at all, and the way back in is the macOS lock screen, which a press of the Touch ID key wakes and unlocks.
+
+The display should not sleep under a lock that keeps the Mac awake. Finding 5 is a way it did: lock during a timed Session, the Session runs out, a minute later the kernel turns the shared assertion off, three minutes later the display sleeps. With a 12 hour Session started every morning, that fits a lock in the evening. This chain is an inference from a tested bug and two measured settings. It was not observed.
+
+The code also has two defects that take the dialog away while Medusa itself still holds the lock, findings 2 and 3. Both are reproduced in tests. Finding 3 needs a dark display under a Medusa lock, which "immediate" rules out on this Mac. Finding 2 needs a display change mid-unlock, which the TV can cause. The app now logs the whole unlock path, so the next occurrence can be replayed. See [issue 01](issues/01-watch-a-real-unlock.md).
 
 ## Findings fixed on this branch
 

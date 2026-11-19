@@ -17,7 +17,7 @@ Each command releases itself. Use the build under test, for example `build/Medus
 
 1. Run `Contents/MacOS/Medusa --self-test`. The displays go black for about a second. Expect `RESULT: PASS`.
 2. Run `Contents/MacOS/Medusa --auth-test 40`. Press a key, check that the dialog appears, cancel it, press a key again, then unlock with Touch ID.
-3. Run it again. Put the displays to sleep (hot corner, or `pmset displaysleepnow` from an ssh session), wait five seconds, press one key, and unlock with Touch ID without pressing anything else. Before the fix the dialog vanished as the displays lit.
+3. Run it again. Put the displays to sleep (hot corner, or `pmset displaysleepnow` from an ssh session), wait five seconds, press one key, and unlock with Touch ID without pressing anything else. Before the fix the dialog vanished as the displays lit. This step needs System Settings → Lock Screen → "Require password after screen saver begins or display is turned off" set to a delay. On "Immediately" the macOS lock screen takes over when the displays sleep, Medusa yields, and its dialog never appears.
 4. Run it once more with the dialog up, switch the TV off and on, and check that the dialog is still visible afterwards.
 5. Read the trail: `log show --last 10m --predicate 'subsystem == "org.medusa.Medusa.local" AND category == "lock"'`.
 
@@ -29,3 +29,5 @@ Each command releases itself. Use the build under test, for example `build/Medus
 - `--auth-test 40`: locked at 15:41:55.997, `auth dialog requested` at 15:41:58.172 after a key press, `auth outcome=success reaction=unlock` at 15:42:02.153, assertion released.
 
 The real event tap and the real `LAContext` call work after the refactor. Steps 3 and 4 (a dark display, a display change with the dialog up) are the two fixed scenarios and have not been run. The cancel and retry in step 2 has not been run either.
+
+`sysadminctl -screenLock status` on this Mac reads "immediate", so step 3 cannot show the fix here as the Mac is set up. Step 4 can.
