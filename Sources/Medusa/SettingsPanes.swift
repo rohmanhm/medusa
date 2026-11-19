@@ -1,6 +1,24 @@
 import Sparkle
 import SwiftUI
 
+/// Explanatory text under a settings section, laid out leading and at its
+/// full height. On macOS 27 a bare `Text` footer in a grouped form is
+/// trailing-aligned and cut after a line or two ("…drives Quick start (rig…").
+struct SettingsFooter: View {
+    private let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - General
 
 struct GeneralPane: View {
@@ -49,7 +67,7 @@ struct GeneralPane: View {
                 Text("Startup")
             } footer: {
                 if let loginItemError {
-                    Text("Couldn't update the login item: \(loginItemError)")
+                    SettingsFooter("Couldn't update the login item: \(loginItemError)")
                         .foregroundStyle(.red)
                 }
             }
@@ -59,7 +77,7 @@ struct GeneralPane: View {
             } header: {
                 Text("Keyboard Shortcut")
             } footer: {
-                Text("Works from any app. Click the shortcut, then type a new key combination.")
+                SettingsFooter("Works from any app. Click the shortcut, then type a new key combination.")
             }
 
             Section {
@@ -80,7 +98,7 @@ struct GeneralPane: View {
             } header: {
                 Text("Auto-Lock")
             } footer: {
-                Text("When on, Medusa locks itself after this much idle time (and "
+                SettingsFooter("When on, Medusa locks itself after this much idle time (and "
                     + "best-effort on ⌃⌘Q) so long work keeps running under the shield. "
                     + "Set the idle time shorter than your display sleep so Medusa wins "
                     + "the race. Does not replace the macOS lock screen — if the system "
@@ -97,7 +115,7 @@ struct GeneralPane: View {
             } header: {
                 Text("Safety")
             } footer: {
-                Text("Dead-man's switch: if unlock ever wedges, Medusa releases itself "
+                SettingsFooter("Dead-man's switch: if unlock ever wedges, Medusa releases itself "
                     + "after this long so you're never trapped. Defaults to 4 hours so "
                     + "overnight locks aren't cut short — pick Never for open-ended "
                     + "sessions. Touch ID still unlocks in seconds under normal use.")
@@ -236,7 +254,7 @@ struct LockScreenPane: View {
             } header: {
                 Text("Message")
             } footer: {
-                Text("Shown to anyone who walks up to the locked screen — "
+                SettingsFooter("Shown to anyone who walks up to the locked screen — "
                     + "\u{201C}Back in 10, render in progress\u{201D} and the like.")
             }
 
@@ -254,7 +272,7 @@ struct LockScreenPane: View {
             } header: {
                 Text("Screen Protection")
             } footer: {
-                Text("Keeps long locks kind to OLED displays. Wander jumps the clock "
+                SettingsFooter("Keeps long locks kind to OLED displays. Wander jumps the clock "
                     + "to a new spot every couple of minutes; Gentle drift glides it "
                     + "smoothly across the whole screen from the moment you lock; "
                     + "dimming fades it once you've stepped away. On lock, a brief "
@@ -460,7 +478,7 @@ struct KeepAwakePane: View {
             Section {
                 Toggle("Keep Mac awake while locked", isOn: $keepAwakeWhileLocked)
             } footer: {
-                Text("The Lock's own Hold on the shared engine — so long builds, renders, "
+                SettingsFooter("The Lock's own Hold on the shared engine — so long builds, renders, "
                     + "and agents keep running under the shield. Turn off to let the display "
                     + "sleep on its normal schedule.")
             }
@@ -481,7 +499,7 @@ struct KeepAwakePane: View {
             } header: {
                 Text("Sessions")
             } footer: {
-                Text("Presets are a comma-separated minute list. The default duration drives "
+                SettingsFooter("Presets are a comma-separated minute list. The default duration drives "
                     + "Quick start (right-click the menu icon), the hotkey, and start-at-launch. "
                     + "Indefinitely is the default.")
             }
@@ -497,7 +515,7 @@ struct KeepAwakePane: View {
             } header: {
                 Text("Battery Guard")
             } footer: {
-                Text("On battery, Sessions end at the threshold or when macOS reports its Final "
+                SettingsFooter("On battery, Sessions end at the threshold or when macOS reports its Final "
                     + "warning — whichever lands first. A dead laptop is worse than a sleeping one. "
                     + "Schedules wait at the same threshold and come back when power returns. "
                     + "Never fires on AC. Does not cover the Lock hold.")
@@ -515,7 +533,7 @@ struct KeepAwakePane: View {
             } header: {
                 Text("Notifications")
             } footer: {
-                Text("Ended notifications fire only for Sessions you didn't stop by hand. "
+                SettingsFooter("Ended notifications fire only for Sessions you didn't stop by hand. "
                     + "The nudge carries an Extend action; the menu always offers Extend too. "
                     + "Permission is asked at the first Session start, never before.")
             }
@@ -526,7 +544,7 @@ struct KeepAwakePane: View {
             } header: {
                 Text("Menu Bar & Shortcut")
             } footer: {
-                Text("The shortcut ships unassigned and is ignored while locked. The countdown "
+                SettingsFooter("The shortcut ships unassigned and is ignored while locked. The countdown "
                     + "shows the time left in a Session that has an end, beside the icon.")
             }
         }
@@ -585,7 +603,7 @@ struct PermissionsPane: View {
                 }
             } footer: {
                 if !allGranted {
-                    Text("If Medusa is already listed in System Settings, flip its toggle on. "
+                    SettingsFooter("If Medusa is already listed in System Settings, flip its toggle on. "
                         + "This pane updates by itself the moment both are granted.")
                 }
             }

@@ -103,7 +103,7 @@ struct SchedulePane: View {
                     LabeledContent("Right now", value: ScheduleCopy.status(schedules: schedules, at: context.date))
                 }
             } footer: {
-                Text("A Schedule keeps your Mac awake on its own during the hours you set. "
+                SettingsFooter("A Schedule keeps your Mac awake on its own during the hours you set. "
                     + "It follows the clock, so it is on as soon as Medusa is running inside "
                     + "those hours, including after a restart or a wake.")
             }
@@ -119,7 +119,7 @@ struct SchedulePane: View {
                     update { $0.append(KeepAwakeSchedule(level: AwakeLevel(rawValue: defaultLevel) ?? .display)) }
                 }
             } footer: {
-                Text("Outside a Schedule your Mac sleeps on its normal schedule. Closing the lid "
+                SettingsFooter("Outside a Schedule your Mac sleeps on its normal schedule. Closing the lid "
                     + "still sleeps it. The Battery guard covers Schedules, and you can pause "
                     + "one for the rest of its hours from the menu. Idle auto-lock is not paused "
                     + "by a Schedule.")
@@ -182,7 +182,7 @@ private struct ScheduleSection: View {
             }
         } footer: {
             if schedule.weekdays.isEmpty {
-                Text("Pick at least one day, or this Schedule never starts.")
+                SettingsFooter("Pick at least one day, or this Schedule never starts.")
                     .foregroundStyle(.red)
             }
         }
