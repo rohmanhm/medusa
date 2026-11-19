@@ -68,5 +68,14 @@
             <sparkle:releaseNotesLink>https://github.com/rohmanhm/medusa/releases/tag/v0.3.1</sparkle:releaseNotesLink>
             <enclosure url="https://github.com/rohmanhm/medusa/releases/download/v0.3.1/Medusa-0.3.1.zip" sparkle:edSignature="ZwzPJzQMIYAAJUWgRklhBE/UL9flTjqPlJ+HoqeR+fUqK9NWDyLJRZmgKtIx1n5pwnIdTJpMwEYydo44cx63Bw==" length="2952456" type="application/octet-stream"/>
         </item>
+        <item>
+            <title>Version 0.4.0</title>
+            <pubDate>Thu, 19 Nov 2026 09:36:01 +0000</pubDate>
+            <sparkle:version>49</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/rohmanhm/medusa/releases/tag/v0.4.0</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/rohmanhm/medusa/releases/download/v0.4.0/Medusa-0.4.0.zip" sparkle:edSignature="pToiA70ouKtkid2pXlLVEcFVMrwXyehX1hrDgXnEEaHBwrV+1v8TyiHpGIqMkU1etLktYmWWUCyPbZQ4qdtbDg==" length="3054775" type="application/octet-stream"/>
+        </item>
     </channel>
 </rss>
